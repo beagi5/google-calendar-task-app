@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import TaskForm from '../components/TaskForm';
 
 // Configure axios to send credentials with requests
 axios.defaults.withCredentials = true;
@@ -9,7 +10,7 @@ const HomePage = () => {
   const [loading, setLoading] = useState(true);
   const [calendarEvents, setCalendarEvents] = useState(null);
   const [tasks, setTasks] = useState(null);
-  const [activeView, setActiveView] = useState('today');
+  const [showTaskForm, setShowTaskForm] = useState(false);
 
   useEffect(() => {
     const fetchUser = async () => {
@@ -55,6 +56,11 @@ const HomePage = () => {
     window.location.href = 'http://localhost:3001/logout';
   };
 
+  const handleTaskCreated = (newTask) => {
+    // Refresh tasks after creating a new one
+    fetchTasks();
+  };
+
   const formatTime = (dateString) => {
     if (!dateString) return '';
     const date = new Date(dateString);
@@ -80,18 +86,35 @@ const HomePage = () => {
   return (
     <div style={{ padding: '20px', fontFamily: 'Arial, sans-serif' }}>
       <header style={{ borderBottom: '2px solid #e0e0e0', paddingBottom: '10px', marginBottom: '20px' }}>
-        <h1>Google Calendar Task Manager</h1>
-        {user && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-            <img 
-              src={user.profile.photos[0].value} 
-              alt="profile" 
-              style={{ borderRadius: '50%', width: '40px', height: '40px' }} 
-            />
-            <span>Welcome, {user.profile.displayName}!</span>
-            <button onClick={handleLogout} style={{ marginLeft: 'auto' }}>Logout</button>
-          </div>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <h1>Google Calendar Task Manager</h1>
+          {user && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+              <button
+                onClick={() => setShowTaskForm(true)}
+                style={{
+                  backgroundColor: '#34a853',
+                  color: 'white',
+                  border: 'none',
+                  padding: '10px 20px',
+                  borderRadius: '5px',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  fontWeight: 'bold'
+                }}
+              >
+                ➕ 新しいタスクを作成
+              </button>
+              <img 
+                src={user.profile.photos[0].value} 
+                alt="profile" 
+                style={{ borderRadius: '50%', width: '40px', height: '40px' }} 
+              />
+              <span>Welcome, {user.profile.displayName}!</span>
+              <button onClick={handleLogout} style={{ marginLeft: '10px' }}>Logout</button>
+            </div>
+          )}
+        </div>
       </header>
 
       {user ? (
@@ -261,6 +284,15 @@ const HomePage = () => {
             Googleでログイン
           </button>
         </div>
+      )}
+
+      {/* Task Form Modal */}
+      {showTaskForm && (
+        <TaskForm
+          onTaskCreated={handleTaskCreated}
+          onClose={() => setShowTaskForm(false)}
+          tasks={tasks}
+        />
       )}
     </div>
   );

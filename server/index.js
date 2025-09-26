@@ -6,6 +6,25 @@ const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const { google } = require('googleapis');
 
+// In-memory task storage (in production, this would be a database)
+let taskStorage = {
+  yearly: [
+    { id: 'y1', title: '2025年：キャリア成長', description: 'プロジェクトマネジメントスキルの向上', progress: 25, createdAt: new Date().toISOString() }
+  ],
+  quarterly: [
+    { id: 'q1', title: 'Q3 2025：新技術習得', description: 'React/Node.jsの深い理解', parentId: 'y1', progress: 40, createdAt: new Date().toISOString() }
+  ],
+  monthly: [
+    { id: 'm1', title: '9月：タスク管理アプリ完成', description: 'Googleカレンダー連携機能実装', parentId: 'q1', progress: 60, createdAt: new Date().toISOString() }
+  ],
+  weekly: [
+    { id: 'w1', title: '今週：基本機能実装', description: 'カレンダー表示とタスク管理', parentId: 'm1', progress: 70, createdAt: new Date().toISOString() }
+  ],
+  daily: [
+    { id: 'd1', title: '今日：タスク作成機能実装', description: 'フォームとAPI連携', parentId: 'w1', progress: 80, dueDate: new Date().toISOString(), createdAt: new Date().toISOString() }
+  ]
+};
+
 // Passport configuration
 passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID,
@@ -13,8 +32,6 @@ passport.use(new GoogleStrategy({
     callbackURL: "/auth/google/callback"
   },
   function(accessToken, refreshToken, profile, cb) {
-    // In a real application, you would find or create a user in your database.
-    // For this example, we'll just pass the user profile and the access token.
     return cb(null, { profile: profile, accessToken: accessToken, refreshToken: refreshToken });
   }
 ));
@@ -144,26 +161,7 @@ app.get('/api/tasks', async (req, res) => {
     return res.status(401).json({ message: 'Not authenticated' });
   }
   
-  // For now, return sample data. Later this will connect to a database
-  const sampleTasks = {
-    yearly: [
-      { id: 'y1', title: '2025年：キャリア成長', description: 'プロジェクトマネジメントスキルの向上', progress: 25 }
-    ],
-    quarterly: [
-      { id: 'q1', title: 'Q3 2025：新技術習得', description: 'React/Node.jsの深い理解', parentId: 'y1', progress: 40 }
-    ],
-    monthly: [
-      { id: 'm1', title: '8月：タスク管理アプリ完成', description: 'Googleカレンダー連携機能実装', parentId: 'q1', progress: 60 }
-    ],
-    weekly: [
-      { id: 'w1', title: '今週：基本機能実装', description: 'カレンダー表示とタスク管理', parentId: 'm1', progress: 70 }
-    ],
-    daily: [
-      { id: 'd1', title: '今日：バックエンドAPI実装', description: 'Calendar APIとタスクAPI', parentId: 'w1', progress: 80, dueDate: new Date().toISOString() }
-    ]
-  };
-  
-  res.json(sampleTasks);
+  res.json(taskStorage);
 });
 
 app.post('/api/tasks', async (req, res) => {
@@ -173,19 +171,70 @@ app.post('/api/tasks', async (req, res) => {
   
   const { title, description, level, parentId, dueDate } = req.body;
   
-  // For now, just return success. Later this will save to database
+  // Create new task
   const newTask = {
-    id: Date.now().toString(),
+    id: 'task_' + Date.now(),
     title,
     description,
     level,
-    parentId,
-    dueDate,
+    parentId: parentId || null,
+    dueDate: dueDate || null,
     progress: 0,
     createdAt: new Date().toISOString()
   };
   
+  // Add to appropriate level in storage
+  if (!taskStorage[level]) {
+    taskStorage[level] = [];
+  }
+  taskStorage[level].push(newTask);
+  
+  console.log('New task created:', newTask);
   res.json(newTask);
+});
+
+// Update task progress
+app.put('/api/tasks/:id', async (req, res) => {
+  if (!req.isAuthenticated()) {
+    return res.status(401).json({ message: 'Not authenticated' });
+  }
+  
+  const { id } = req.params;
+  const { progress, title, description } = req.body;
+  
+  // Find and update task
+  for (let level in taskStorage) {
+    const taskIndex = taskStorage[level].findIndex(task => task.id === id);
+    if (taskIndex !== -1) {
+      if (progress !== undefined) taskStorage[level][taskIndex].progress = progress;
+      if (title !== undefined) taskStorage[level][taskIndex].title = title;
+      if (description !== undefined) taskStorage[level][taskIndex].description = description;
+      
+      return res.json(taskStorage[level][taskIndex]);
+    }
+  }
+  
+  res.status(404).json({ message: 'Task not found' });
+});
+
+// Delete task
+app.delete('/api/tasks/:id', async (req, res) => {
+  if (!req.isAuthenticated()) {
+    return res.status(401).json({ message: 'Not authenticated' });
+  }
+  
+  const { id } = req.params;
+  
+  // Find and delete task
+  for (let level in taskStorage) {
+    const taskIndex = taskStorage[level].findIndex(task => task.id === id);
+    if (taskIndex !== -1) {
+      const deletedTask = taskStorage[level].splice(taskIndex, 1)[0];
+      return res.json(deletedTask);
+    }
+  }
+  
+  res.status(404).json({ message: 'Task not found' });
 });
 
 // Logout route
