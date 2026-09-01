@@ -1,237 +1,158 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import './TaskManager.css';
 
 axios.defaults.withCredentials = true;
 
-const TaskForm = ({ onTaskCreated, onClose, tasks }) => {
-  const [formData, setFormData] = useState({
-    title: '',
-    description: '',
-    level: 'daily',
-    parentId: '',
-    dueDate: ''
-  });
+const isEditing = (task) => !!task;
 
-  const [isSubmitting, setIsSubmitting] = useState(false);
+const TaskForm = ({ onClose, onTaskCreated, task = null }) => {
+  const [title, setTitle] = useState('');
+  const [level, setLevel] = useState('daily');
+  const [dueDate, setDueDate] = useState('');
+  const [dueTime, setDueTime] = useState('');
+  const [description, setDescription] = useState('');
+  // ⭐ カレンダー連携のフラグはフロントエンドで制御し、データとして送信
+  const [syncToCalendar, setSyncToCalendar] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
 
-  const handleInputChange = (e) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({
-      ...prev,
-      [name]: value
-    }));
-  };
+  useEffect(() => {
+    if (task) {
+      setTitle(task.title || '');
+      setLevel(task.level || 'daily');
+      setDueDate(task.dueDate ? task.dueDate.split('T')[0] : '');
+      setDescription(task.description || '');
+    }
+  }, [task]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setIsSubmitting(true);
+    setLoading(true);
+    setError(null);
+
+    // フロントエンドでの基本的な入力チェック
+    if (!title || !dueDate) {
+        setError("タスク名と期日は必須です。");
+        setLoading(false);
+        return;
+    }
 
     try {
-      const response = await axios.post('http://localhost:3001/api/tasks', formData);
-      onTaskCreated(response.data);
-      setFormData({
-        title: '',
-        description: '',
-        level: 'daily',
-        parentId: '',
-        dueDate: ''
-      });
-      onClose();
-    } catch (error) {
-      console.error('Error creating task:', error);
-      alert('タスクの作成に失敗しました');
+      let response;
+      if (isEditing(task)) {
+        response = await axios.put(`/api/tasks/${task.id}`, {
+          title,
+          description,
+          dueDate,
+          syncToCalendar,
+        });
+      } else {
+        const taskData = {
+          title,
+          level,
+          description,
+          dueDate,
+          dueTime: dueTime || null,
+          // ⭐ バックエンドに連携要求を伝えるフラグ
+          syncToCalendar,
+        };
+        response = await axios.post('/api/tasks', taskData);
+      }
+
+      onTaskCreated(response.data); // 親コンポーネントに通知
+
+    } catch (err) {
+      // バックエンドからのエラーレスポンスをユーザーに表示
+      const errorMessage = err.response?.data?.error || err.response?.data?.message || '保存に失敗しました。';
+      setError(errorMessage);
+
+    } finally {
+      setLoading(false);
+      onClose(); // エラーがあっても閉じるか、条件付きで閉じるかを選択（ここでは閉じる）
     }
-
-    setIsSubmitting(false);
   };
-
-  const getParentOptions = () => {
-    if (!tasks) return [];
-    
-    switch (formData.level) {
-      case 'quarterly':
-        return tasks.yearly || [];
-      case 'monthly':
-        return tasks.quarterly || [];
-      case 'weekly':
-        return tasks.monthly || [];
-      case 'daily':
-        return tasks.weekly || [];
-      default:
-        return [];
-    }
-  };
-
-  const parentOptions = getParentOptions();
 
   return (
-    <div style={{
-      position: 'fixed',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      backgroundColor: 'rgba(0,0,0,0.5)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      zIndex: 1000
-    }}>
-      <div style={{
-        backgroundColor: 'white',
-        padding: '30px',
-        borderRadius: '10px',
-        width: '500px',
-        maxWidth: '90vw',
-        maxHeight: '80vh',
-        overflowY: 'auto'
-      }}>
-        <h2>新しいタスクを作成</h2>
-        
+    <div className="modal-overlay">
+      <div className="modal-content" style={{ maxWidth: '450px' }}>
+        <h3>{isEditing(task) ? 'タスクを編集' : '新しいタスクを作成'}</h3>
         <form onSubmit={handleSubmit}>
-          <div style={{ marginBottom: '15px' }}>
-            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-              タスクのレベル
-            </label>
-            <select
-              name="level"
-              value={formData.level}
-              onChange={handleInputChange}
-              style={{
-                width: '100%',
-                padding: '8px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
-                fontSize: '14px'
-              }}
+          <div className="form-group">
+            <label htmlFor="title">タスク名 *</label>
+            <input
+              type="text"
+              id="title"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
               required
-            >
-              <option value="yearly">📅 年間目標</option>
-              <option value="quarterly">📊 四半期目標</option>
-              <option value="monthly">📅 月間タスク</option>
-              <option value="weekly">📝 週間タスク</option>
-              <option value="daily">✅ 日次タスク</option>
+            />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="level">期間</label>
+            <select id="level" value={level} onChange={(e) => setLevel(e.target.value)} disabled={isEditing(task)}>
+              <option value="yearly">年間</option>
+              <option value="quarterly">四半期</option>
+              <option value="monthly">月間</option>
+              <option value="weekly">週間</option>
+              <option value="daily">日次</option>
             </select>
           </div>
 
-          {parentOptions.length > 0 && (
-            <div style={{ marginBottom: '15px' }}>
-              <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-                上位目標
-              </label>
-              <select
-                name="parentId"
-                value={formData.parentId}
-                onChange={handleInputChange}
-                style={{
-                  width: '100%',
-                  padding: '8px',
-                  border: '1px solid #ddd',
-                  borderRadius: '4px',
-                  fontSize: '14px'
-                }}
-              >
-                <option value="">選択してください</option>
-                {parentOptions.map(parent => (
-                  <option key={parent.id} value={parent.id}>
-                    {parent.title}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          <div style={{ marginBottom: '15px' }}>
-            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-              タスク名
-            </label>
+          <div className="form-group">
+            <label htmlFor="dueDate">期日 *</label>
             <input
-              type="text"
-              name="title"
-              value={formData.title}
-              onChange={handleInputChange}
-              placeholder="タスクのタイトルを入力"
-              style={{
-                width: '100%',
-                padding: '8px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
-                fontSize: '14px'
-              }}
+              type="date"
+              id="dueDate"
+              value={dueDate}
+              onChange={(e) => setDueDate(e.target.value)}
               required
             />
           </div>
 
-          <div style={{ marginBottom: '15px' }}>
-            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-              説明
-            </label>
-            <textarea
-              name="description"
-              value={formData.description}
-              onChange={handleInputChange}
-              placeholder="タスクの詳細説明"
-              rows="3"
-              style={{
-                width: '100%',
-                padding: '8px',
-                border: '1px solid #ddd',
-                borderRadius: '4px',
-                fontSize: '14px',
-                resize: 'vertical'
-              }}
-            />
-          </div>
-
-          {(formData.level === 'daily' || formData.level === 'weekly') && (
-            <div style={{ marginBottom: '15px' }}>
-              <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-                締切日
-              </label>
+          {!isEditing(task) && (
+            <div className="form-group">
+              <label htmlFor="dueTime">時刻(任意)</label>
               <input
-                type="date"
-                name="dueDate"
-                value={formData.dueDate}
-                onChange={handleInputChange}
-                style={{
-                  width: '100%',
-                  padding: '8px',
-                  border: '1px solid #ddd',
-                  borderRadius: '4px',
-                  fontSize: '14px'
-                }}
+                type="time"
+                id="dueTime"
+                value={dueTime}
+                onChange={(e) => setDueTime(e.target.value)}
               />
             </div>
           )}
 
-          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-            <button
-              type="button"
-              onClick={onClose}
-              style={{
-                padding: '10px 20px',
-                border: '1px solid #ddd',
-                borderRadius: '5px',
-                backgroundColor: 'white',
-                cursor: 'pointer'
-              }}
-            >
-              キャンセル
-            </button>
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              style={{
-                padding: '10px 20px',
-                border: 'none',
-                borderRadius: '5px',
-                backgroundColor: '#4285f4',
-                color: 'white',
-                cursor: isSubmitting ? 'not-allowed' : 'pointer'
-              }}
-            >
-              {isSubmitting ? '作成中...' : 'タスクを作成'}
-            </button>
+          <div className="form-group">
+            <label htmlFor="description">説明</label>
+            <textarea
+              id="description"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={3}
+            />
+          </div>
+
+          {/* カレンダー連携チェックボックス(標準でON、作成・編集どちらでも切り替え可能) */}
+          <div className="form-group checkbox-group">
+              <input
+                  type="checkbox"
+                  id="syncCalendar"
+                  checked={syncToCalendar}
+                  onChange={(e) => setSyncToCalendar(e.target.checked)}
+              />
+              <label htmlFor="syncCalendar">
+                  Googleカレンダーにイベントを作成する
+              </label>
+          </div>
+
+          {error && <div className="error-message">{error}</div>}
+
+          <div className="form-actions">
+              <button type="button" onClick={onClose} disabled={loading}>キャンセル</button>
+              <button type="submit" disabled={loading}>
+                  {loading ? '保存中...' : (isEditing(task) ? '更新' : 'タスクを作成')}
+              </button>
           </div>
         </form>
       </div>

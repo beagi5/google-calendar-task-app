@@ -3,7 +3,7 @@ import React from 'react';
 const LoginPage = () => {
   const handleLogin = () => {
     // Redirect to the Google login page
-    window.location.href = 'http://localhost:3001/auth/google';
+    window.location.href = '/auth/google';
   };
 
   return (
