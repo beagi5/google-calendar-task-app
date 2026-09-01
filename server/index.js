@@ -12,15 +12,20 @@ const validator = require('validator');
 const app = express();
 
 // Basic security headers
+// hsts: false — this app is intentionally served over plain HTTP (Tailscale private network,
+// no TLS cert for the Tailscale hostname). HSTS would make browsers force-upgrade to HTTPS
+// and fail to connect at all.
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
       styleSrc: ["'self'", "'unsafe-inline'"],
       scriptSrc: ["'self'"],
-      imgSrc: ["'self'", "data:", "https:"]
+      imgSrc: ["'self'", "data:", "https:"],
+      upgradeInsecureRequests: null // this app is intentionally HTTP-only (Tailscale); don't force-upgrade sub-resources to HTTPS
     }
-  }
+  },
+  hsts: false
 }));
 
 // Rate limiting
