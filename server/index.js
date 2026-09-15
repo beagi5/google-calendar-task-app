@@ -213,25 +213,13 @@ app.get('/api/user', requireAuth, (req, res) => {
 
 app.get('/api/calendar/events', requireAuth, async (req, res) => {
   try {
-    const userTokens = req.session.userTokens;
-    if (!userTokens || !userTokens.accessToken) {
+    const calendar = getCalendarClientForRequest(req);
+    if (!calendar) {
       return res.status(401).json({ error: 'Calendar access not authorized' });
     }
 
-    const oauth2Client = new google.auth.OAuth2(
-      process.env.GOOGLE_CLIENT_ID,
-      process.env.GOOGLE_CLIENT_SECRET,
-      '/auth/google/callback'
-    );
-
-    oauth2Client.setCredentials({
-      access_token: userTokens.accessToken,
-      refresh_token: userTokens.refreshToken
-    });
-
-    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
-
-    // Get events with error handling for token refresh
+    // Get events. getCalendarClientForRequest() returns a client whose events.*
+    // methods already retry once after refreshing the access token on a 401.
     const now = new Date();
     const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const endOfNextMonth = new Date(now.getFullYear(), now.getMonth() + 2, 0, 23, 59, 59);
@@ -248,30 +236,9 @@ app.get('/api/calendar/events', requireAuth, async (req, res) => {
       });
     } catch (error) {
       if (error.code === 401) {
-        // Token might be expired, attempt refresh
-        if (userTokens.refreshToken) {
-          try {
-            const { credentials } = await oauth2Client.refreshAccessToken();
-            oauth2Client.setCredentials(credentials);
-            req.session.userTokens.accessToken = credentials.access_token;
-            
-            response = await calendar.events.list({
-              calendarId: 'primary',
-              timeMin: startOfDay.toISOString(),
-              timeMax: endOfNextMonth.toISOString(),
-              singleEvents: true,
-              orderBy: 'startTime',
-              maxResults: 250
-            });
-          } catch (refreshError) {
-            return res.status(401).json({ error: 'Calendar access expired. Please re-authenticate.' });
-          }
-        } else {
-          return res.status(401).json({ error: 'Calendar access expired. Please re-authenticate.' });
-        }
-      } else {
-        throw error;
+        return res.status(401).json({ error: 'Calendar access expired. Please re-authenticate.' });
       }
+      throw error;
     }
 
     const events = response.data.items || [];
@@ -401,10 +368,22 @@ app.delete('/api/calendar/events/:eventId', requireAuth, async (req, res) => {
   }
 });
 
-// Shared calendar helpers (used by task create, complete, and delete)
+// Shared calendar helper (used by every route that talks to the Google Calendar API:
+// GET/PATCH/DELETE /api/calendar/events, task create/complete/delete sync).
+//
+// Returns an object shaped like `{ events: {...} }` — the only surface this app uses
+// off the googleapis calendar client (`calendar.events`, which is non-writable on the
+// real client, so it can't be patched in place). Its `events.*` methods are wrapped so
+// that a single 401 from Google triggers exactly one access-token refresh + retry,
+// transparently to every call site. If the refresh fails (or there's no refresh token
+// to try), the wrapped method rethrows an Error with `code: 401` so callers can keep
+// treating "401" as "needs re-auth", exactly as a raw googleapis 401 would have behaved.
+const CALENDAR_EVENT_METHODS = ['list', 'get', 'insert', 'patch', 'delete'];
+
 function getCalendarClientForRequest(req) {
   const userTokens = req.session.userTokens;
   if (!userTokens || !userTokens.accessToken) return null;
+
   const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
@@ -414,7 +393,31 @@ function getCalendarClientForRequest(req) {
     access_token: userTokens.accessToken,
     refresh_token: userTokens.refreshToken
   });
-  return google.calendar({ version: 'v3', auth: oauth2Client });
+
+  const rawEvents = google.calendar({ version: 'v3', auth: oauth2Client }).events;
+
+  const wrappedEvents = {};
+  CALENDAR_EVENT_METHODS.forEach((method) => {
+    wrappedEvents[method] = async (...args) => {
+      try {
+        return await rawEvents[method].apply(rawEvents, args);
+      } catch (error) {
+        if (error.code !== 401 || !userTokens.refreshToken) throw error;
+        try {
+          const { credentials } = await oauth2Client.refreshAccessToken();
+          oauth2Client.setCredentials(credentials);
+          req.session.userTokens.accessToken = credentials.access_token;
+          return await rawEvents[method].apply(rawEvents, args);
+        } catch (refreshError) {
+          const authError = new Error('Calendar access expired after refresh attempt');
+          authError.code = 401;
+          throw authError;
+        }
+      }
+    };
+  });
+
+  return { events: wrappedEvents };
 }
 
 async function createTaskCalendarEvent(req, task) {
