@@ -74,6 +74,29 @@ const HomePage = () => {
     }
   };
 
+  // 持ち越し: 期日が今日より前で未完了の日次タスク(dueDateは'YYYY-MM-DD'なので文字列比較で足りる)
+  const localToday = () => {
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  };
+  const isOverdueTask = (task) =>
+    !task.completed && !!task.dueDate && task.dueDate.split('T')[0] < localToday();
+
+  const carryOver = async (taskIds) => {
+    try {
+      await axios.post('/api/tasks/carry-over', { toDate: localToday(), ...(taskIds && { taskIds }) });
+      fetchTasks();
+      fetchCalendarEvents();
+    } catch (error) {
+      console.error('Error carrying over tasks:', error);
+      window.alert('持ち越しに失敗しました。');
+    }
+  };
+
+  const handleCarryOverTask = (task) => carryOver([task.id]);
+  const handleCarryOverAll = () => carryOver(null);
+
   const handleEditTask = (task) => {
     setEditingTask(task);
     setShowTaskForm(true);
@@ -130,6 +153,8 @@ const HomePage = () => {
     return { total, completed, pct: total > 0 ? Math.round((completed / total) * 100) : 0 };
   };
 
+  const overdueTasks = tasks?.daily?.filter(isOverdueTask) || [];
+  const todayTasks = tasks?.daily?.filter((t) => !isOverdueTask(t)) || [];
   const todayProgress = combinedProgress(tasks?.daily, calendarEvents?.today);
   const weekProgress = combinedProgress(tasks?.weekly, calendarEvents?.thisWeek);
 
@@ -402,9 +427,31 @@ const HomePage = () => {
               }}>
                 今日のタスク
               </h3>
-              {tasks?.daily?.length > 0 ? (
+              {overdueTasks.length > 0 && (
+                <div className="carry-over-section">
+                  <div className="carry-over-header">
+                    <span>持ち越しタスク({overdueTasks.length}件)</span>
+                    <button type="button" className="carry-over-all-btn" onClick={handleCarryOverAll}>
+                      すべて今日に移す
+                    </button>
+                  </div>
+                  {overdueTasks.map((task) => (
+                    <TaskItem
+                      key={task.id}
+                      task={task}
+                      currentUserId={user.id}
+                      overdue
+                      onToggleComplete={handleToggleComplete}
+                      onEdit={handleEditTask}
+                      onDelete={handleDeleteTask}
+                      onCarryOver={handleCarryOverTask}
+                    />
+                  ))}
+                </div>
+              )}
+              {todayTasks.length > 0 ? (
                 <div>
-                  {tasks.daily.map((task) => (
+                  {todayTasks.map((task) => (
                     <TaskItem
                       key={task.id}
                       task={task}

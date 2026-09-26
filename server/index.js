@@ -442,6 +442,23 @@ async function createTaskCalendarEvent(req, task) {
   }
 }
 
+// Move a task's all-day calendar event to a new date (same shape as createTaskCalendarEvent)
+async function patchCalendarEventDate(req, eventId, date) {
+  const calendar = getCalendarClientForRequest(req);
+  if (!calendar) return { ok: false };
+  try {
+    await calendar.events.patch({
+      calendarId: 'primary',
+      eventId,
+      resource: { start: { date }, end: { date } },
+    });
+    return { ok: true };
+  } catch (err) {
+    console.error('Failed to move calendar event date:', err);
+    return { ok: false };
+  }
+}
+
 const COMPLETED_PREFIX = '[完了] ';
 
 async function patchCalendarEventForCompletion(req, eventId, completed) {
@@ -536,6 +553,43 @@ const validateTaskUpdate = (req, res, next) => {
   next();
 };
 
+// Carry over: move the user's overdue, incomplete daily tasks to `toDate` (the client's "today").
+// Optional `taskIds` limits it to those tasks. One request instead of one PUT per task,
+// because the API rate limit is tight.
+app.post('/api/tasks/carry-over', requireAuth, async (req, res) => {
+  const { toDate, taskIds } = req.body;
+  if (typeof toDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(toDate) || !validator.isISO8601(toDate)) {
+    return res.status(400).json({ error: 'toDate must be YYYY-MM-DD' });
+  }
+  if (taskIds !== undefined && (!Array.isArray(taskIds) || taskIds.some((id) => typeof id !== 'string'))) {
+    return res.status(400).json({ error: 'taskIds must be an array of strings' });
+  }
+
+  const targets = (taskStorage.daily || []).filter((task) =>
+    task.userId === req.user.id &&
+    !task.completed &&
+    task.dueDate &&
+    task.dueDate.split('T')[0] < toDate &&
+    (!taskIds || taskIds.includes(task.id))
+  );
+
+  for (const task of targets) {
+    task.dueDate = toDate;
+    task.carriedOverAt = new Date().toISOString();
+    if (task.calendarEventId) {
+      const result = await patchCalendarEventDate(req, task.calendarEventId, toDate);
+      if (!result.ok) {
+        task.calendarSyncError = 'Calendar update failed';
+      } else {
+        delete task.calendarSyncError;
+      }
+    }
+  }
+  if (targets.length > 0) saveTasksToFile();
+
+  res.json({ moved: targets.length, tasks: targets });
+});
+
 app.put('/api/tasks/:id', requireAuth, validateTaskUpdate, async (req, res) => {
   const { id } = req.params;
   const { title, description, dueDate, progress, completed, parentId, syncToCalendar } = req.body;
@@ -550,7 +604,18 @@ app.put('/api/tasks/:id', requireAuth, validateTaskUpdate, async (req, res) => {
 
     if (title !== undefined) task.title = title;
     if (description !== undefined) task.description = description;
-    if (dueDate !== undefined) task.dueDate = dueDate || null;
+    if (dueDate !== undefined) {
+      const dateChanged = (dueDate || null) !== task.dueDate;
+      task.dueDate = dueDate || null;
+      if (dateChanged && task.dueDate && task.calendarEventId) {
+        const result = await patchCalendarEventDate(req, task.calendarEventId, task.dueDate.split('T')[0]);
+        if (!result.ok) {
+          task.calendarSyncError = 'Calendar update failed';
+        } else {
+          delete task.calendarSyncError;
+        }
+      }
+    }
     if (parentId !== undefined) task.parentId = parentId || null;
     if (progress !== undefined) task.progress = progress;
 

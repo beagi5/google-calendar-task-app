@@ -367,3 +367,38 @@ body {
   color: #888;
   margin-top: 2px;
 }
+
+/* Carry-over (overdue, incomplete daily tasks) */
+.carry-over-section {
+  margin-bottom: 20px;
+  padding: 12px 12px 4px;
+  background: rgba(217, 48, 37, 0.04);
+  border: 1px solid rgba(217, 48, 37, 0.2);
+  border-radius: 12px;
+}
+
+.carry-over-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #d93025;
+}
+
+.carry-over-all-btn,
+.task-actions button.carry-over-btn {
+  background: #d93025;
+  color: #fff;
+  border: 1px solid #d93025;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.task-actions button.carry-over-btn:hover,
+.carry-over-all-btn:hover {
+  background: #b3261e;
+}

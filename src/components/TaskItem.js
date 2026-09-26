@@ -6,12 +6,19 @@ const REPEAT_LABELS = {
   monthly: '毎月',
 };
 
+// 'YYYY-MM-DD...' -> 'M/D'
+const formatDueDate = (dueDate) => {
+  const [, m, d] = dueDate.split('T')[0].split('-');
+  return `${Number(m)}/${Number(d)}`;
+};
+
 const TaskItem = ({
   task,
   currentUserId,
   onToggleComplete,
   onEdit,
   onDelete,
+  onCarryOver,
   compact = false,
   overdue = false,
   parentTitle = null,
@@ -60,7 +67,9 @@ const TaskItem = ({
         <div className="task-item-body">
           <div className="task-item-title" style={{ fontWeight: 600, fontSize: '16px', color: '#333' }}>
             {task.title}
-            {overdue && !task.completed && <span className="overdue-badge">期限切れ</span>}
+            {overdue && !task.completed && (
+              <span className="overdue-badge">期限切れ{task.dueDate ? `(${formatDueDate(task.dueDate)})` : ''}</span>
+            )}
           </div>
           {task.description && (
             <div style={{ color: '#666', fontSize: '14px', margin: '8px 0' }}>{task.description}</div>
@@ -73,6 +82,7 @@ const TaskItem = ({
             <div className="task-actions">
               <button type="button" onClick={() => onEdit(task)}>編集</button>
               <button type="button" onClick={() => onDelete(task)}>削除</button>
+              {onCarryOver && <button type="button" className="carry-over-btn" onClick={() => onCarryOver(task)}>今日に移す</button>}
             </div>
           )}
         </div>
