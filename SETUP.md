@@ -32,6 +32,22 @@ GOOGLE_CALLBACK_URL=http://localhost:3001/auth/google/callback
 
 OAuthクライアントの場所: Google Cloud Console(プロジェクト番号 `217216459456`)→「APIとサービス」→「認証情報」→ **「Task Manager Pro」という名前のウェブアプリケーション型クライアント**(デスクトップ型のクライアントも同プロジェクトに残っているが、そちらは使わない。理由は下記「ハマりどころ」参照)。
 
+### 任意: Claude 用の書き込み口（`/api/claude/`）
+
+Google ログインの代わりにトークンで読み書きする API。**2つとも設定したときだけ有効**（片方でも無ければ 503 を返す）。
+
+```
+CLAUDE_API_TOKEN=<十分に長いランダムな文字列。例: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))">
+CLAUDE_API_USER_ID=<自分の Google のユーザーID。tasks.json の各行の userId と同じ値>
+```
+
+- 呼び出しは `Authorization: Bearer <トークン>` を付ける。トークンはこのファイル以外に書かない（git・ログ・チャットに出さない）
+- **日本語を含む JSON は、UTF-8 のファイルか標準入力で送る**（`curl --data-binary @file.json` など）。Git 付属の curl は引数の日本語を Shift-JIS で送るため、化けた文字（U+FFFD）を含む本文は 400 で断る
+- 書き込みは15分に50回まで（`/api` 共通の制限）。まとめて作るときは `POST /api/claude/tasks/bulk`（1〜200件）
+- Google カレンダーには触らない。カレンダーとつながった行の完了・期日の変更と削除は 409（画面から行う）
+
+テスト用に `TASKS_FILE=<パス>` で保存先を変えられる（未設定なら `server/data/tasks.json`）。サーバーのテストは `cd server && npm test`。
+
 ## 3. ビルド・起動確認
 
 ```

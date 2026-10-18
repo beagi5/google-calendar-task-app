@@ -7,6 +7,7 @@ const { google } = require('googleapis');
 const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
 const validator = require('validator');
+const crypto = require('crypto');
 
 // Security middleware setup
 const app = express();
@@ -43,12 +44,17 @@ const apiLimiter = rateLimit({
   message: 'Too many API requests, please try again later.'
 });
 
-// Task storage: persisted to server/data/tasks.json on every mutation
+// Task storage: persisted to server/data/tasks.json on every mutation.
+// The TASKS_FILE environment variable overrides the location (the tests use it so they never
+// touch the real data; a relative path is taken from the working directory). When it is unset
+// the path is the usual server/data/tasks.json.
 const fs = require('fs');
 const path = require('path');
 
-const DATA_DIR = path.join(__dirname, 'data');
-const TASKS_FILE = path.join(DATA_DIR, 'tasks.json');
+const TASKS_FILE = process.env.TASKS_FILE
+  ? path.resolve(process.env.TASKS_FILE)
+  : path.join(__dirname, 'data', 'tasks.json');
+const DATA_DIR = path.dirname(TASKS_FILE);
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 let taskStorage = {
@@ -64,11 +70,16 @@ try {
   console.warn('tasks.json not found or invalid — starting empty.', err.message);
 }
 
+// Returns true when the file was written, false when writing failed (the error is logged, as before).
+// The existing routes do not look at the result and behave as they always did; the Claude API
+// answers 500 and undoes its change when this returns false.
 const saveTasksToFile = () => {
   try {
     fs.writeFileSync(TASKS_FILE, JSON.stringify(taskStorage, null, 2), 'utf8');
+    return true;
   } catch (err) {
     console.error('Failed to save tasks.json:', err);
+    return false;
   }
 };
 
@@ -131,39 +142,52 @@ app.use(express.static(BUILD_DIR));
 // Allowed task categories. Omitted on create -> server defaults to 'その他'.
 const VALID_CATEGORIES = ['YCDC', '事業', '株', 'マネジメント', 'その他'];
 
-// Input validation middleware
-const validateTaskInput = (req, res, next) => {
-  const { title, description, level, dueDate, category, weekStart } = req.body;
+// Input validation. The rules live in plain functions (no req/res) that return an error message,
+// or null when the input is fine, so the Claude API can run the very same rules per item in bulk.
+const taskInputError = (body) => {
+  const { title, description, level, dueDate, category, weekStart } = body;
 
   // Validate required fields
   if (!title || typeof title !== 'string' || title.trim().length === 0) {
-    return res.status(400).json({ error: 'Valid title is required' });
+    return 'Valid title is required';
   }
 
   if (title.length > 200) {
-    return res.status(400).json({ error: 'Title too long (max 200 characters)' });
+    return 'Title too long (max 200 characters)';
   }
 
   if (description && description.length > 1000) {
-    return res.status(400).json({ error: 'Description too long (max 1000 characters)' });
+    return 'Description too long (max 1000 characters)';
   }
 
   const validLevels = ['yearly', 'quarterly', 'monthly', 'weekly', 'daily'];
   if (!validLevels.includes(level)) {
-    return res.status(400).json({ error: 'Invalid task level' });
+    return 'Invalid task level';
   }
 
   if (dueDate && !validator.isISO8601(dueDate)) {
-    return res.status(400).json({ error: 'Invalid date format' });
+    return 'Invalid date format';
   }
 
   if (category !== undefined && !VALID_CATEGORIES.includes(category)) {
-    return res.status(400).json({ error: 'Invalid category' });
+    return 'Invalid category';
   }
 
   if (weekStart !== undefined && weekStart !== null && !validator.isISO8601(weekStart)) {
-    return res.status(400).json({ error: 'Invalid weekStart format' });
+    return 'Invalid weekStart format';
   }
+
+  return null;
+};
+
+// Input validation middleware
+const validateTaskInput = (req, res, next) => {
+  const error = taskInputError(req.body);
+  if (error) {
+    return res.status(400).json({ error });
+  }
+
+  const { title, description } = req.body;
 
   // Trim inputs. No HTML-escaping here: React escapes text on render (no innerHTML anywhere),
   // and escaping at input stored '/' as '&#x2F;', which then showed up literally on screen and in Calendar.
@@ -174,6 +198,33 @@ const validateTaskInput = (req, res, next) => {
 
   next();
 };
+
+// A new task row. Shared by POST /api/tasks and the Claude API so both create the same shape.
+function buildTask({ title, description, level, parentId, dueDate, category, weekStart }, userId) {
+  return {
+    id: 'task_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+    title,
+    description,
+    level,
+    parentId: parentId || null,
+    dueDate: dueDate || null,
+    category: category || 'その他',
+    weekStart: weekStart || null,
+    progress: 0,
+    completed: false,
+    repeat: 'none',
+    createdAt: new Date().toISOString(),
+    syncedToCalendar: false,
+    userId // Associate task with user
+  };
+}
+
+// Marking a task done sets progress to 100 unless the same request sets progress itself;
+// un-marking leaves progress as it was. Shared by PUT /api/tasks/:id and the Claude API.
+function setTaskCompleted(task, completed, progress) {
+  task.completed = completed;
+  if (progress === undefined) task.progress = completed ? 100 : task.progress;
+}
 
 // Authentication middleware
 const requireAuth = (req, res, next) => {
@@ -496,24 +547,9 @@ app.get('/api/tasks', requireAuth, (req, res) => {
 
 app.post('/api/tasks', requireAuth, validateTaskInput, async (req, res) => {
   try {
-    const { title, description, level, parentId, dueDate, syncToCalendar, category, weekStart } = req.body;
+    const { level, dueDate, syncToCalendar } = req.body;
 
-    const newTask = {
-      id: 'task_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
-      title,
-      description,
-      level,
-      parentId: parentId || null,
-      dueDate: dueDate || null,
-      category: category || 'その他',
-      weekStart: weekStart || null,
-      progress: 0,
-      completed: false,
-      repeat: 'none',
-      createdAt: new Date().toISOString(),
-      syncedToCalendar: false,
-      userId: req.user.id // Associate task with user
-    };
+    const newTask = buildTask(req.body, req.user.id);
 
     // Add to storage
     if (!taskStorage[level]) {
@@ -536,37 +572,49 @@ app.post('/api/tasks', requireAuth, validateTaskInput, async (req, res) => {
 });
 
 // Lightweight partial-update validator for PUT — unlike validateTaskInput,
-// every field is optional (a completion toggle sends only { completed })
-const validateTaskUpdate = (req, res, next) => {
-  const { title, description, dueDate, progress, completed, parentId, syncToCalendar, category, weekStart } = req.body;
+// every field is optional (a completion toggle sends only { completed }).
+// Like taskInputError, the rules are a plain function so the Claude API can share them.
+const taskUpdateError = (body) => {
+  const { title, description, dueDate, progress, completed, parentId, syncToCalendar, category, weekStart } = body;
 
   if (title !== undefined && (typeof title !== 'string' || !title.trim() || title.length > 200)) {
-    return res.status(400).json({ error: 'Invalid title' });
+    return 'Invalid title';
   }
   if (description !== undefined && description !== null && description.length > 1000) {
-    return res.status(400).json({ error: 'Description too long (max 1000 characters)' });
+    return 'Description too long (max 1000 characters)';
   }
   if (dueDate !== undefined && dueDate !== null && !validator.isISO8601(dueDate)) {
-    return res.status(400).json({ error: 'Invalid date format' });
+    return 'Invalid date format';
   }
   if (progress !== undefined && (typeof progress !== 'number' || progress < 0 || progress > 100)) {
-    return res.status(400).json({ error: 'Invalid progress' });
+    return 'Invalid progress';
   }
   if (completed !== undefined && typeof completed !== 'boolean') {
-    return res.status(400).json({ error: 'Invalid completed flag' });
+    return 'Invalid completed flag';
   }
   if (parentId !== undefined && parentId !== null && typeof parentId !== 'string') {
-    return res.status(400).json({ error: 'Invalid parentId' });
+    return 'Invalid parentId';
   }
   if (syncToCalendar !== undefined && typeof syncToCalendar !== 'boolean') {
-    return res.status(400).json({ error: 'Invalid syncToCalendar flag' });
+    return 'Invalid syncToCalendar flag';
   }
   if (category !== undefined && !VALID_CATEGORIES.includes(category)) {
-    return res.status(400).json({ error: 'Invalid category' });
+    return 'Invalid category';
   }
   if (weekStart !== undefined && weekStart !== null && !validator.isISO8601(weekStart)) {
-    return res.status(400).json({ error: 'Invalid weekStart format' });
+    return 'Invalid weekStart format';
   }
+
+  return null;
+};
+
+const validateTaskUpdate = (req, res, next) => {
+  const error = taskUpdateError(req.body);
+  if (error) {
+    return res.status(400).json({ error });
+  }
+
+  const { title, description } = req.body;
 
   // Trim only (see validateTaskInput for why there is no HTML-escaping)
   if (title !== undefined) req.body.title = title.trim();
@@ -644,8 +692,7 @@ app.put('/api/tasks/:id', requireAuth, validateTaskUpdate, async (req, res) => {
     if (progress !== undefined) task.progress = progress;
 
     if (completed !== undefined && completed !== wasCompleted) {
-      task.completed = completed;
-      if (progress === undefined) task.progress = completed ? 100 : task.progress;
+      setTaskCompleted(task, completed, progress);
 
       if (task.calendarEventId) {
         const result = await patchCalendarEventForCompletion(req, task.calendarEventId, completed);
@@ -715,6 +762,247 @@ app.delete('/api/tasks/:id', requireAuth, async (req, res) => {
   res.status(404).json({ error: 'Task not found or access denied' });
 });
 
+// ---------------------------------------------------------------------------
+// Claude API: read and write tasks with a shared token instead of a Google login, so a Claude
+// session can use it with curl (localhost on this PC, Tailscale from the other one).
+//
+// - Enabled only when both CLAUDE_API_TOKEN and CLAUDE_API_USER_ID are set. Otherwise every
+//   /api/claude/* request is answered 503. The routes are registered either way: if they were
+//   not, a GET would fall through to the SPA fallback below and come back as index.html (200).
+// - Rows created here belong to CLAUDE_API_USER_ID (the owner's Google user id), so the owner can
+//   still edit and delete them from the logged-in screen. Update and delete only touch rows with
+//   that userId.
+// - It never calls Google Calendar (there is no OAuth token on this path). A row that already has
+//   a calendarEventId therefore cannot be completed, re-dated or deleted from here (409).
+// - Mounted under /api, after apiLimiter, so the 50 requests / 15 min limit applies to it too.
+// - The token and the Authorization header are never logged or sent back.
+// - Text that went through a wrong character encoding arrives as U+FFFD (Git's curl sends Japanese
+//   typed inline after -d as Shift-JIS, for one). A title or description containing it is refused
+//   with 400 here, instead of being saved garbled. Only here: the shared rules, and so
+//   /api/tasks, are left as they were.
+// - A write and the file go together: if saving fails, the change is undone in memory and the
+//   answer is 500 "Failed to save tasks", so the memory never gets ahead of the file.
+// ---------------------------------------------------------------------------
+// Surrounding whitespace in the settings is ignored: a stray space must not silently break the
+// token match, or give new rows an owner id that the logged-in screen does not recognise.
+const CLAUDE_API_TOKEN = (process.env.CLAUDE_API_TOKEN || '').trim();
+const CLAUDE_API_USER_ID = (process.env.CLAUDE_API_USER_ID || '').trim();
+const CLAUDE_API_ENABLED = CLAUDE_API_TOKEN !== '' && CLAUDE_API_USER_ID !== '';
+const CLAUDE_BULK_MAX = 200;
+
+// Both sides are hashed so timingSafeEqual always gets buffers of the same length: it throws when
+// the lengths differ, and checking the lengths first would leak the length of the real token.
+const sha256 = (value) => crypto.createHash('sha256').update(value, 'utf8').digest();
+const CLAUDE_API_TOKEN_HASH = sha256(CLAUDE_API_TOKEN);
+
+const hasValidClaudeToken = (req) => {
+  const header = req.get('Authorization');
+  const match = typeof header === 'string' ? /^Bearer\s+(.+)$/i.exec(header) : null;
+  if (!match) return false;
+  return crypto.timingSafeEqual(sha256(match[1]), CLAUDE_API_TOKEN_HASH);
+};
+
+const isPlainObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+
+// The shared rules call .length / .trim() / validator.isISO8601 on these fields, which throw
+// (500) on non-strings, and a bulk item can be any JSON value. Check the shape first so the
+// Claude API answers 400 instead.
+const claudeShapeError = (value, what) => {
+  if (!isPlainObject(value)) return `${what} must be a JSON object`;
+  for (const key of ['description', 'dueDate', 'weekStart', 'parentId']) {
+    if (value[key] !== undefined && value[key] !== null && typeof value[key] !== 'string') {
+      return `Invalid ${key}`;
+    }
+  }
+  return null;
+};
+
+const CLAUDE_BODY = 'Request body (Content-Type: application/json)';
+
+// U+FFFD, the replacement character that a body in the wrong encoding is decoded into.
+const REPLACEMENT_CHAR = String.fromCodePoint(0xFFFD);
+
+// Refuses a title or description that contains it. Needs a plain object (see claudeShapeError).
+const claudeTextError = (value) => {
+  for (const key of ['title', 'description']) {
+    if (typeof value[key] === 'string' && value[key].includes(REPLACEMENT_CHAR)) {
+      return 'Text contains U+FFFD; send the body as UTF-8';
+    }
+  }
+  return null;
+};
+
+// One new-task body checked with the POST /api/tasks rules (plus the Claude API's own checks above).
+// Returns { error } or { input } (a trimmed copy). Fields the rules do not know (userId,
+// calendarEventId, ...) are never used.
+const claudeNewTask = (raw, what) => {
+  const error = claudeShapeError(raw, what) || claudeTextError(raw) || taskInputError(raw);
+  if (error) return { error };
+  const input = { ...raw, title: raw.title.trim() };
+  if (raw.description) input.description = raw.description.trim();
+  return { input };
+};
+
+// Adds the rows to the end of their level arrays (making an array that is missing). Returns the
+// function that takes exactly these rows, and the arrays this call made, out again.
+const appendTasks = (tasks) => {
+  const madeLevels = [];
+  for (const task of tasks) {
+    if (!taskStorage[task.level]) {
+      taskStorage[task.level] = [];
+      madeLevels.push(task.level);
+    }
+    taskStorage[task.level].push(task);
+  }
+  return () => {
+    for (const task of tasks) {
+      const rows = taskStorage[task.level];
+      const index = rows.lastIndexOf(task);
+      if (index !== -1) rows.splice(index, 1);
+    }
+    for (const level of madeLevels) delete taskStorage[level];
+  };
+};
+
+// Saves after an in-memory change. If the file cannot be written, `undo` puts the memory back (in
+// place, so the file and the memory never differ), the answer is 500, and this returns false: the
+// caller must stop. Returns true when the caller may answer 200.
+const saveOrUndo = (res, undo) => {
+  if (saveTasksToFile()) return true;
+  undo();
+  res.status(500).json({ error: 'Failed to save tasks' });
+  return false;
+};
+
+// The row with this id, but only if it belongs to CLAUDE_API_USER_ID.
+const findClaudeTask = (id) => {
+  for (const level of Object.keys(taskStorage)) {
+    if (!Array.isArray(taskStorage[level])) continue;
+    const index = taskStorage[level].findIndex((task) => task.id === id && task.userId === CLAUDE_API_USER_ID);
+    if (index !== -1) return { level, index, task: taskStorage[level][index] };
+  }
+  return null;
+};
+
+const claudeApi = express.Router();
+
+claudeApi.use((req, res, next) => {
+  if (!CLAUDE_API_ENABLED) {
+    return res.status(503).json({ error: 'Claude API is disabled' });
+  }
+  if (!hasValidClaudeToken(req)) {
+    return res.status(401).json({ error: 'Invalid token' });
+  }
+  next();
+});
+
+claudeApi.get('/tasks', (req, res) => {
+  res.json(taskStorage);
+});
+
+claudeApi.post('/tasks', (req, res) => {
+  const { error, input } = claudeNewTask(req.body, CLAUDE_BODY);
+  if (error) return res.status(400).json({ error });
+
+  const task = buildTask(input, CLAUDE_API_USER_ID);
+  const undo = appendTasks([task]);
+  if (!saveOrUndo(res, undo)) return;
+  res.json(task);
+});
+
+// 1 to CLAUDE_BULK_MAX tasks at once. Every item is validated before anything is created, so one
+// bad item means no item is created. The rows are appended in the order sent, with a single save.
+claudeApi.post('/tasks/bulk', (req, res) => {
+  if (!isPlainObject(req.body) || !Array.isArray(req.body.tasks)) {
+    return res.status(400).json({ error: `${CLAUDE_BODY} must be {"tasks":[...]}` });
+  }
+  const items = req.body.tasks;
+  if (items.length < 1 || items.length > CLAUDE_BULK_MAX) {
+    return res.status(400).json({ error: `tasks must contain 1 to ${CLAUDE_BULK_MAX} items` });
+  }
+
+  const tasks = [];
+  for (let index = 0; index < items.length; index++) {
+    const { error, input } = claudeNewTask(items[index], 'Task');
+    if (error) return res.status(400).json({ error, index });
+    tasks.push(buildTask(input, CLAUDE_API_USER_ID));
+  }
+
+  const undo = appendTasks(tasks);
+  if (!saveOrUndo(res, undo)) return;
+  res.json({ created: tasks });
+});
+
+claudeApi.put('/tasks/:id', (req, res) => {
+  const body = req.body;
+  const badInput = claudeShapeError(body, CLAUDE_BODY) || claudeTextError(body);
+  if (badInput) return res.status(400).json({ error: badInput });
+  // Silently ignoring it would let the caller believe the calendar was updated.
+  if (Object.prototype.hasOwnProperty.call(body, 'syncToCalendar')) {
+    return res.status(400).json({ error: 'syncToCalendar is not supported by the Claude API' });
+  }
+  const invalid = taskUpdateError(body);
+  if (invalid) return res.status(400).json({ error: invalid });
+
+  const found = findClaudeTask(req.params.id);
+  if (!found) return res.status(404).json({ error: 'Task not found' });
+  const { task } = found;
+
+  const { title, description, dueDate, progress, completed, parentId, category, weekStart } = body;
+  const completionChanges = completed !== undefined && completed !== task.completed;
+  const dueDateChanges = dueDate !== undefined && (dueDate || null) !== task.dueDate;
+
+  // Without OAuth the calendar event cannot follow, so refuse (and change nothing) rather than
+  // leave the task and its event out of step. Re-sending the current values is not a change.
+  if (task.calendarEventId && (completionChanges || dueDateChanges)) {
+    return res.status(409).json({
+      error: 'Task is linked to a Google Calendar event: completed and dueDate cannot be changed with the Claude API'
+    });
+  }
+
+  // The row as it is now, to put back (in the same key order) if the file cannot be saved.
+  const before = { ...task };
+  const undo = () => {
+    for (const key of Object.keys(task)) delete task[key];
+    Object.assign(task, before);
+  };
+
+  if (title !== undefined) task.title = title.trim();
+  if (description !== undefined) task.description = description ? description.trim() : description;
+  if (category !== undefined) task.category = category;
+  if (weekStart !== undefined) task.weekStart = weekStart || null;
+  if (dueDate !== undefined) task.dueDate = dueDate || null;
+  if (parentId !== undefined) task.parentId = parentId || null;
+  if (progress !== undefined) task.progress = progress;
+  if (completionChanges) setTaskCompleted(task, completed, progress);
+
+  if (!saveOrUndo(res, undo)) return;
+  res.json(task);
+});
+
+claudeApi.delete('/tasks/:id', (req, res) => {
+  const found = findClaudeTask(req.params.id);
+  if (!found) return res.status(404).json({ error: 'Task not found' });
+  if (found.task.calendarEventId) {
+    return res.status(409).json({
+      error: 'Task is linked to a Google Calendar event: delete it in the app so the event is removed too'
+    });
+  }
+
+  const { level, index, task } = found;
+  taskStorage[level].splice(index, 1);
+  // If the file cannot be saved the row goes back to the position it was in.
+  if (!saveOrUndo(res, () => taskStorage[level].splice(index, 0, task))) return;
+  res.json(task);
+});
+
+// Any other path or method: answer in JSON here, otherwise a GET would reach the SPA fallback.
+claudeApi.use((req, res) => {
+  res.status(404).json({ error: 'Endpoint not found' });
+});
+
+app.use('/api/claude', claudeApi);
+
 app.get('/logout', requireAuth, (req, res, next) => {
   req.logout(function(err) {
     if (err) { return next(err); }
@@ -747,4 +1035,5 @@ app.use((req, res) => {
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`Secure server running on port ${PORT}`);
+  console.log(CLAUDE_API_ENABLED ? 'Claude API: enabled' : 'Claude API: disabled (token or owner id not set)');
 });
