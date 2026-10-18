@@ -165,10 +165,11 @@ const validateTaskInput = (req, res, next) => {
     return res.status(400).json({ error: 'Invalid weekStart format' });
   }
 
-  // Sanitize inputs
-  req.body.title = validator.escape(title.trim());
+  // Trim inputs. No HTML-escaping here: React escapes text on render (no innerHTML anywhere),
+  // and escaping at input stored '/' as '&#x2F;', which then showed up literally on screen and in Calendar.
+  req.body.title = title.trim();
   if (description) {
-    req.body.description = validator.escape(description.trim());
+    req.body.description = description.trim();
   }
 
   next();
@@ -358,9 +359,10 @@ app.patch('/api/calendar/events/:eventId', requireAuth, async (req, res) => {
     }
 
     const resource = {};
-    if (summary !== undefined) resource.summary = validator.escape(summary.trim());
-    if (description !== undefined) resource.description = validator.escape((description || '').trim());
-    if (location !== undefined) resource.location = validator.escape((location || '').trim());
+    // Plain text to Google Calendar. Escaping here wrote '&#x2F;' etc. into the user's real events.
+    if (summary !== undefined) resource.summary = summary.trim();
+    if (description !== undefined) resource.description = (description || '').trim();
+    if (location !== undefined) resource.location = (location || '').trim();
 
     if (date) {
       if (allDay) {
@@ -566,8 +568,9 @@ const validateTaskUpdate = (req, res, next) => {
     return res.status(400).json({ error: 'Invalid weekStart format' });
   }
 
-  if (title !== undefined) req.body.title = validator.escape(title.trim());
-  if (description) req.body.description = validator.escape(description.trim());
+  // Trim only (see validateTaskInput for why there is no HTML-escaping)
+  if (title !== undefined) req.body.title = title.trim();
+  if (description) req.body.description = description.trim();
 
   next();
 };
