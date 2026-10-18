@@ -6,6 +6,21 @@ const REPEAT_LABELS = {
   monthly: '毎月',
 };
 
+const CATEGORY_BADGE_CLASS = {
+  'YCDC': 'category-badge-ycdc',
+  '事業': 'category-badge-business',
+  '株': 'category-badge-stock',
+  'マネジメント': 'category-badge-management',
+  'その他': 'category-badge-other',
+};
+
+const CategoryBadge = ({ category }) => {
+  if (!category) return null;
+  return (
+    <span className={`category-badge ${CATEGORY_BADGE_CLASS[category] || ''}`}>{category}</span>
+  );
+};
+
 // 'YYYY-MM-DD...' -> 'M/D'
 const formatDueDate = (dueDate) => {
   const [, m, d] = dueDate.split('T')[0].split('-');
@@ -43,6 +58,7 @@ const TaskItem = ({
           {task.title}
           {task.repeat && task.repeat !== 'none' && ` (くり返し: ${REPEAT_LABELS[task.repeat]})`}
         </span>
+        <CategoryBadge category={task.category} />
         <span style={{ fontSize: '12px', color: '#666' }}>進捗: {task.progress}%</span>
         {overdue && !task.completed && <span className="overdue-badge">期限切れ</span>}
         {isOwner && (
@@ -67,6 +83,7 @@ const TaskItem = ({
         <div className="task-item-body">
           <div className="task-item-title" style={{ fontWeight: 600, fontSize: '16px', color: '#333' }}>
             {task.title}
+            <CategoryBadge category={task.category} />
             {overdue && !task.completed && (
               <span className="overdue-badge">期限切れ{task.dueDate ? `(${formatDueDate(task.dueDate)})` : ''}</span>
             )}

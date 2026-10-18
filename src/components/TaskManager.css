@@ -402,3 +402,81 @@ body {
 .carry-over-all-btn:hover {
   background: #b3261e;
 }
+
+/* Filter button groups: week filter (今週/来週/後で), category filter (すべて+5), and the
+   matching form-side button groups (category picker, weekly week-bucket picker) */
+.week-filter-button-group,
+.category-filter-button-group,
+.category-button-group,
+.week-bucket-button-group {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.week-filter-btn,
+.category-filter-btn,
+.category-btn,
+.week-bucket-btn {
+  background: #f1f1f1;
+  border: 1px solid #ddd;
+  border-radius: 20px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  color: #555;
+  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
+.week-filter-btn:hover,
+.category-filter-btn:hover,
+.category-btn:hover,
+.week-bucket-btn:hover {
+  background: #e4e4e4;
+}
+
+.week-filter-btn.active,
+.category-filter-btn.active,
+.category-btn.active,
+.week-bucket-btn.active {
+  background: linear-gradient(135deg, #34a853, #4caf50);
+  color: white;
+  border-color: transparent;
+}
+
+/* Category badges (shown on TaskItem, both compact and normal variants) */
+.category-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  margin-left: 8px;
+  white-space: nowrap;
+}
+
+.category-badge-ycdc {
+  background: rgba(66, 133, 244, 0.12);
+  color: #4285f4;
+}
+
+.category-badge-business {
+  background: rgba(156, 39, 176, 0.12);
+  color: #9c27b0;
+}
+
+.category-badge-stock {
+  background: rgba(234, 67, 53, 0.12);
+  color: #ea4335;
+}
+
+.category-badge-management {
+  background: rgba(251, 140, 0, 0.12);
+  color: #fb8c00;
+}
+
+.category-badge-other {
+  background: rgba(117, 117, 117, 0.12);
+  color: #757575;
+}

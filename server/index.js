@@ -128,38 +128,49 @@ app.use(passport.session());
 const BUILD_DIR = path.join(__dirname, '..', 'build');
 app.use(express.static(BUILD_DIR));
 
+// Allowed task categories. Omitted on create -> server defaults to 'その他'.
+const VALID_CATEGORIES = ['YCDC', '事業', '株', 'マネジメント', 'その他'];
+
 // Input validation middleware
 const validateTaskInput = (req, res, next) => {
-  const { title, description, level, dueDate } = req.body;
-  
+  const { title, description, level, dueDate, category, weekStart } = req.body;
+
   // Validate required fields
   if (!title || typeof title !== 'string' || title.trim().length === 0) {
     return res.status(400).json({ error: 'Valid title is required' });
   }
-  
+
   if (title.length > 200) {
     return res.status(400).json({ error: 'Title too long (max 200 characters)' });
   }
-  
+
   if (description && description.length > 1000) {
     return res.status(400).json({ error: 'Description too long (max 1000 characters)' });
   }
-  
+
   const validLevels = ['yearly', 'quarterly', 'monthly', 'weekly', 'daily'];
   if (!validLevels.includes(level)) {
     return res.status(400).json({ error: 'Invalid task level' });
   }
-  
+
   if (dueDate && !validator.isISO8601(dueDate)) {
     return res.status(400).json({ error: 'Invalid date format' });
   }
-  
+
+  if (category !== undefined && !VALID_CATEGORIES.includes(category)) {
+    return res.status(400).json({ error: 'Invalid category' });
+  }
+
+  if (weekStart !== undefined && weekStart !== null && !validator.isISO8601(weekStart)) {
+    return res.status(400).json({ error: 'Invalid weekStart format' });
+  }
+
   // Sanitize inputs
   req.body.title = validator.escape(title.trim());
   if (description) {
     req.body.description = validator.escape(description.trim());
   }
-  
+
   next();
 };
 
@@ -483,7 +494,7 @@ app.get('/api/tasks', requireAuth, (req, res) => {
 
 app.post('/api/tasks', requireAuth, validateTaskInput, async (req, res) => {
   try {
-    const { title, description, level, parentId, dueDate, syncToCalendar } = req.body;
+    const { title, description, level, parentId, dueDate, syncToCalendar, category, weekStart } = req.body;
 
     const newTask = {
       id: 'task_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
@@ -492,6 +503,8 @@ app.post('/api/tasks', requireAuth, validateTaskInput, async (req, res) => {
       level,
       parentId: parentId || null,
       dueDate: dueDate || null,
+      category: category || 'その他',
+      weekStart: weekStart || null,
       progress: 0,
       completed: false,
       repeat: 'none',
@@ -523,7 +536,7 @@ app.post('/api/tasks', requireAuth, validateTaskInput, async (req, res) => {
 // Lightweight partial-update validator for PUT — unlike validateTaskInput,
 // every field is optional (a completion toggle sends only { completed })
 const validateTaskUpdate = (req, res, next) => {
-  const { title, description, dueDate, progress, completed, parentId, syncToCalendar } = req.body;
+  const { title, description, dueDate, progress, completed, parentId, syncToCalendar, category, weekStart } = req.body;
 
   if (title !== undefined && (typeof title !== 'string' || !title.trim() || title.length > 200)) {
     return res.status(400).json({ error: 'Invalid title' });
@@ -545,6 +558,12 @@ const validateTaskUpdate = (req, res, next) => {
   }
   if (syncToCalendar !== undefined && typeof syncToCalendar !== 'boolean') {
     return res.status(400).json({ error: 'Invalid syncToCalendar flag' });
+  }
+  if (category !== undefined && !VALID_CATEGORIES.includes(category)) {
+    return res.status(400).json({ error: 'Invalid category' });
+  }
+  if (weekStart !== undefined && weekStart !== null && !validator.isISO8601(weekStart)) {
+    return res.status(400).json({ error: 'Invalid weekStart format' });
   }
 
   if (title !== undefined) req.body.title = validator.escape(title.trim());
@@ -592,7 +611,7 @@ app.post('/api/tasks/carry-over', requireAuth, async (req, res) => {
 
 app.put('/api/tasks/:id', requireAuth, validateTaskUpdate, async (req, res) => {
   const { id } = req.params;
-  const { title, description, dueDate, progress, completed, parentId, syncToCalendar } = req.body;
+  const { title, description, dueDate, progress, completed, parentId, syncToCalendar, category, weekStart } = req.body;
 
   // Find and update task (ensure user owns the task)
   for (let level in taskStorage) {
@@ -604,6 +623,8 @@ app.put('/api/tasks/:id', requireAuth, validateTaskUpdate, async (req, res) => {
 
     if (title !== undefined) task.title = title;
     if (description !== undefined) task.description = description;
+    if (category !== undefined) task.category = category;
+    if (weekStart !== undefined) task.weekStart = weekStart || null;
     if (dueDate !== undefined) {
       const dateChanged = (dueDate || null) !== task.dueDate;
       task.dueDate = dueDate || null;

@@ -4,8 +4,16 @@ import TaskForm from '../components/TaskForm';
 import TaskItem from '../components/TaskItem';
 import EventDetailModal from '../components/EventDetailModal';
 import '../components/TaskManager.css';
+import { getWeekBucket } from '../utils/week';
 
 axios.defaults.withCredentials = true;
+
+const CATEGORY_FILTERS = ['all', 'YCDC', '事業', '株', 'マネジメント', 'その他'];
+const WEEK_FILTERS = [
+  ['thisWeek', '今週'],
+  ['nextWeek', '来週'],
+  ['later', '後で'],
+];
 
 const HomePage = () => {
   const [user, setUser] = useState(null);
@@ -17,6 +25,8 @@ const HomePage = () => {
   const [selectedEvent, setSelectedEvent] = useState(null);
   const [expandedSections, setExpandedSections] = useState({ thisWeek: false, nextWeek: false, nextMonth: false });
   const toggleExpand = (key) => setExpandedSections((prev) => ({ ...prev, [key]: !prev[key] }));
+  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [weekFilter, setWeekFilter] = useState('thisWeek');
 
   useEffect(() => {
     const fetchUser = async () => {
@@ -95,7 +105,6 @@ const HomePage = () => {
   };
 
   const handleCarryOverTask = (task) => carryOver([task.id]);
-  const handleCarryOverAll = () => carryOver(null);
 
   const handleEditTask = (task) => {
     setEditingTask(task);
@@ -153,10 +162,25 @@ const HomePage = () => {
     return { total, completed, pct: total > 0 ? Math.round((completed / total) * 100) : 0 };
   };
 
-  const overdueTasks = tasks?.daily?.filter(isOverdueTask) || [];
-  const todayTasks = tasks?.daily?.filter((t) => !isOverdueTask(t)) || [];
+  // カテゴリフィルタ: 'all' は素通し。category 未設定のタスクは「その他」扱いで判定する
+  const matchesCategoryFilter = (t) => categoryFilter === 'all' || (t.category || 'その他') === categoryFilter;
+
+  const overdueTasks = (tasks?.daily?.filter(isOverdueTask) || []).filter(matchesCategoryFilter);
+  const todayTasks = (tasks?.daily?.filter((t) => !isOverdueTask(t)) || []).filter(matchesCategoryFilter);
+  // 絞り込み中は画面に出ている持ち越しタスクだけを移す('すべて'のときは従来どおり taskIds なし=全件)
+  const handleCarryOverAll = () =>
+    carryOver(categoryFilter === 'all' ? null : overdueTasks.map((t) => t.id));
   const todayProgress = combinedProgress(tasks?.daily, calendarEvents?.today);
-  const weekProgress = combinedProgress(tasks?.weekly, calendarEvents?.thisWeek);
+  // 週次の進捗は今週の週間タスクだけで数える(来週・後でのタスクは含めない)
+  const weekProgress = combinedProgress(
+    (tasks?.weekly || []).filter((t) => getWeekBucket(t.weekStart, new Date()) === 'thisWeek'),
+    calendarEvents?.thisWeek
+  );
+
+  // 週フィルタ(今週/来週/後で) + カテゴリフィルタを両方適用した週間タスク
+  const weeklyTasksFiltered = (tasks?.weekly || [])
+    .filter((t) => getWeekBucket(t.weekStart, new Date()) === weekFilter)
+    .filter(matchesCategoryFilter);
 
   const formatTime = (dateString) => {
     if (!dateString) return '';
@@ -269,7 +293,21 @@ const HomePage = () => {
             }}>
               今日のフォーカス
             </h2>
-            
+
+            {/* Category filter: applies to daily tasks below and to the weekly list in the sidebar */}
+            <div className="category-filter-button-group" style={{ marginBottom: '24px' }}>
+              {CATEGORY_FILTERS.map((c) => (
+                <button
+                  type="button"
+                  key={c}
+                  className={`category-filter-btn${categoryFilter === c ? ' active' : ''}`}
+                  onClick={() => setCategoryFilter(c)}
+                >
+                  {c === 'all' ? 'すべて' : c}
+                </button>
+              ))}
+            </div>
+
             {/* Today's Calendar Events */}
             <div style={{ marginBottom: '32px' }}>
               <h3 style={{ 
@@ -548,16 +586,36 @@ const HomePage = () => {
                   ))}
                   
                   {/* Weekly Goals */}
-                  {tasks.weekly?.map((task) => (
-                    <div key={task.id} className="hierarchy-item" style={{ marginBottom: '12px', marginLeft: '45px' }}>
-                      <div style={{ fontWeight: '600', color: '#689f38', marginBottom: '4px' }}>
-                        週間: {task.title}
-                      </div>
-                      <div style={{ fontSize: '12px', color: '#666', marginLeft: '20px' }}>
-                        進捗: {task.progress}%
-                      </div>
+                  <div style={{ marginLeft: '45px', marginBottom: '12px' }}>
+                    <div style={{ fontWeight: '600', color: '#689f38', marginBottom: '8px' }}>週間タスク</div>
+                    <div className="week-filter-button-group" style={{ marginBottom: '8px' }}>
+                      {WEEK_FILTERS.map(([key, label]) => (
+                        <button
+                          type="button"
+                          key={key}
+                          className={`week-filter-btn${weekFilter === key ? ' active' : ''}`}
+                          onClick={() => setWeekFilter(key)}
+                        >
+                          {label}
+                        </button>
+                      ))}
                     </div>
-                  ))}
+                    {weeklyTasksFiltered.length > 0 ? (
+                      weeklyTasksFiltered.map((task) => (
+                        <TaskItem
+                          key={task.id}
+                          task={task}
+                          currentUserId={user.id}
+                          compact
+                          onToggleComplete={handleToggleComplete}
+                          onEdit={handleEditTask}
+                          onDelete={handleDeleteTask}
+                        />
+                      ))
+                    ) : (
+                      <div style={{ fontSize: '12px', color: '#888' }}>該当する週間タスクはありません</div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
