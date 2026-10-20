@@ -48,6 +48,23 @@ CLAUDE_API_USER_ID=<自分の Google のユーザーID。tasks.json の各行の
 
 テスト用に `TASKS_FILE=<パス>` で保存先を変えられる（未設定なら `server/data/tasks.json`）。サーバーのテストは `cd server && npm test`。
 
+### 任意: Notion の「やること」を画面に出す（`/api/yarukoto`）
+
+画面の上のほう（メインの列。「今日は〇〇の日」の帯とカテゴリのボタンの下）の「やること」カードが、Notion のデータベース「やること」の「1時間」の行を読み、行のチェックで「済」を書き戻す。**最初の2つを設定したときだけ有効**（片方でも無ければ `/api/yarukoto` は 503 を返し、カードに「Notion の鍵が未設定です」と出る。ほかの画面は今までどおり動く）。
+
+```
+NOTION_TOKEN=<Notion のトークン>
+NOTION_YARUKOTO_DATA_SOURCE_ID=<「やること」データベースの data source ID>
+NOTION_API_BASE=https://api.notion.com
+NOTION_VERSION=2026-03-11
+```
+
+- 鍵（トークン）の作り方: Notion の内部コネクション（Internal connection）。Capabilities は Read content と Update content。「やること」のデータベースだけに接続する。公式: https://developers.notion.com/guides/get-started/internal-connections
+- `NOTION_API_BASE`（テスト用に向け先を変える）と `NOTION_VERSION` は任意。書かなければ上に書いた値になる。前後の空白は無視される
+- トークンはこのファイル以外に書かない（git・ログ・チャットに出さない）。サーバーの中だけで使い、ブラウザには渡さない
+- 読むのは 種類=1時間 の行のうち、未済（どの週でも）と、予定週が今週の月曜以降の済と、今日（サーバーの時計で0時以降）に最終更新された済（後で・先週の行を今日済ませたものを、画面が「今日の目標」に数えるため）。読んだ一覧は15秒だけサーバーのメモリに覚え、その間の再読み込みでは Notion を呼ばない。画面からできるのは「済」の切り替えだけ（行の作成、名前や週の編集はしない）
+- Notion に書き込めるのは、直近1時間のうちに一覧に出た行だけ（済にして一覧から外れた行も、1時間は未済に戻せる）。それ以外の id は 404。`/api` 共通の回数制限（15分に50回）がかかる
+
 ## 3. ビルド・起動確認
 
 ```

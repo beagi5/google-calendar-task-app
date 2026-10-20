@@ -403,12 +403,11 @@ body {
   background: #b3261e;
 }
 
-/* Filter button groups: week filter (今週/来週/後で), category filter (すべて+5), and the
-   matching form-side button groups (category picker, weekly week-bucket picker) */
+/* Filter button groups: week filter (今週/来週/後で, in the やること card), category filter
+   (すべて+5), and the matching form-side button group (category picker) */
 .week-filter-button-group,
 .category-filter-button-group,
-.category-button-group,
-.week-bucket-button-group {
+.category-button-group {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
@@ -416,8 +415,7 @@ body {
 
 .week-filter-btn,
 .category-filter-btn,
-.category-btn,
-.week-bucket-btn {
+.category-btn {
   background: #f1f1f1;
   border: 1px solid #ddd;
   border-radius: 20px;
@@ -431,21 +429,19 @@ body {
 
 .week-filter-btn:hover,
 .category-filter-btn:hover,
-.category-btn:hover,
-.week-bucket-btn:hover {
+.category-btn:hover {
   background: #e4e4e4;
 }
 
 .week-filter-btn.active,
 .category-filter-btn.active,
-.category-btn.active,
-.week-bucket-btn.active {
+.category-btn.active {
   background: linear-gradient(135deg, #34a853, #4caf50);
   color: white;
   border-color: transparent;
 }
 
-/* Category badges (shown on TaskItem, both compact and normal variants) */
+/* Category badges (shown on TaskItem, both compact and normal variants, and on the やること rows) */
 .category-badge {
   display: inline-block;
   font-size: 11px;
@@ -479,4 +475,268 @@ body {
 .category-badge-other {
   background: rgba(117, 117, 117, 0.12);
   color: #757575;
+}
+
+/* やること(Notion) card: one row per Notion to-do (YarukotoItem) */
+.yarukoto-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.yarukoto-item:last-child {
+  border-bottom: none;
+}
+
+.yarukoto-item input[type="checkbox"] {
+  margin-top: 3px;
+}
+
+.yarukoto-item-body {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The name is a button: pressing it opens / closes the details of the row */
+.yarukoto-item-toggle {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.yarukoto-item-toggle:hover .yarukoto-item-title {
+  text-decoration: underline;
+}
+
+.yarukoto-item-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #333;
+  overflow-wrap: anywhere;
+}
+
+.yarukoto-item.completed .yarukoto-item-title {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+
+/* Completion condition, source and the Notion link, shown when the row is open */
+.yarukoto-item-details {
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: rgba(66, 133, 244, 0.05);
+  border-radius: 8px;
+  font-size: 12px;
+  color: #555;
+}
+
+.yarukoto-detail + .yarukoto-detail {
+  margin-top: 6px;
+}
+
+.yarukoto-detail-label {
+  font-weight: 600;
+  color: #777;
+  margin-bottom: 2px;
+}
+
+.yarukoto-detail-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.yarukoto-detail-text a {
+  color: #4285f4;
+}
+
+.yarukoto-detail-empty {
+  color: #999;
+}
+
+.yarukoto-item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.yarukoto-item-meta .category-badge {
+  margin-left: 0;
+}
+
+.yarukoto-badge-project {
+  background: rgba(0, 150, 136, 0.12);
+  color: #00897b;
+}
+
+.yarukoto-badge-deadline {
+  background: rgba(63, 81, 181, 0.12);
+  color: #3f51b5;
+}
+
+.yarukoto-badge-stale {
+  background: rgba(217, 48, 37, 0.1);
+  color: #d93025;
+}
+
+.yarukoto-link {
+  display: inline-block;
+  margin-top: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #4285f4;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.yarukoto-link:hover {
+  text-decoration: underline;
+}
+
+.yarukoto-message {
+  text-align: center;
+  padding: 16px;
+  font-size: 13px;
+  color: #888;
+  background: rgba(248, 249, 250, 0.5);
+  border-radius: 8px;
+}
+
+/* The card, in the main column under the category buttons */
+.yarukoto-card {
+  margin-bottom: 32px;
+}
+
+/* 今日の目標 / できたら前倒し */
+.yarukoto-section {
+  margin-bottom: 16px;
+}
+
+.yarukoto-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.yarukoto-section-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: #2e7d32;
+}
+
+.yarukoto-section-extra .yarukoto-section-title {
+  color: #757575;
+}
+
+.yarukoto-section-count {
+  font-size: 12px;
+  font-weight: 600;
+  color: #34a853;
+}
+
+.yarukoto-achieved {
+  display: inline-block;
+  margin: 4px 0 6px;
+  padding: 3px 12px;
+  border-radius: 12px;
+  background: rgba(52, 168, 83, 0.12);
+  color: #2e7d32;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.yarukoto-rest {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(52, 168, 83, 0.08);
+  color: #2e7d32;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.yarukoto-rest-toggle {
+  display: block;
+  margin: 0 0 8px;
+  padding: 6px 14px;
+  border: 1px solid #ddd;
+  border-radius: 20px;
+  background: #f1f1f1;
+  color: #555;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.yarukoto-rest-toggle:hover {
+  background: #e4e4e4;
+}
+
+.yarukoto-free-note {
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: #888;
+}
+
+.yarukoto-done-earlier {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #888;
+}
+
+/* 今日は〇〇の日: the band at the top of the main column */
+.day-banner {
+  margin-bottom: 20px;
+  padding: 14px 18px;
+  border-radius: 12px;
+  border-left: 6px solid #9aa0a6;
+  background: rgba(154, 160, 166, 0.12);
+}
+
+.day-banner-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: #333;
+}
+
+.day-banner-hint {
+  margin-top: 4px;
+  font-size: 14px;
+  color: #555;
+}
+
+.day-banner-iri {
+  border-left-color: #4285f4;
+  background: rgba(66, 133, 244, 0.1);
+}
+
+.day-banner-ake {
+  border-left-color: #9c27b0;
+  background: rgba(156, 39, 176, 0.1);
+}
+
+.day-banner-nikkin {
+  border-left-color: #fb8c00;
+  background: rgba(251, 140, 0, 0.1);
+}
+
+.day-banner-yasumi {
+  border-left-color: #34a853;
+  background: rgba(52, 168, 83, 0.1);
+}
+
+.day-banner-none .day-banner-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #777;
 }

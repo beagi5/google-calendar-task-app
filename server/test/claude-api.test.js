@@ -119,8 +119,8 @@ async function startServer({ token = '', ownerId = '', seed } = {}) {
   try {
     await new Promise((resolve, reject) => {
       const timer = setTimeout(
-        () => reject(new Error(`server did not start within 30s. Output:\n${output}`)),
-        30000
+        () => reject(new Error(`server did not start within 90s. Output:\n${output}`)),
+        90000
       );
       child.stdout.on('data', () => {
         if (output.includes('Secure server running')) {

@@ -1,10 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import TaskForm from '../components/TaskForm';
 import TaskItem from '../components/TaskItem';
+import YarukotoItem from '../components/YarukotoItem';
 import EventDetailModal from '../components/EventDetailModal';
 import '../components/TaskManager.css';
-import { getWeekBucket } from '../utils/week';
+import { getMondayISO, getWeekBucket } from '../utils/week';
+import { getDayInfo, planYarukoto } from '../utils/day';
 
 axios.defaults.withCredentials = true;
 
@@ -14,6 +16,12 @@ const WEEK_FILTERS = [
   ['nextWeek', '来週'],
   ['later', '後で'],
 ];
+// サーバー(server/notion.js)が Notion の混雑のときに返す本文。未設定の 503 と見分けるために使う
+const YARUKOTO_BUSY_MESSAGE = 'Notion is busy, try again later';
+// 画面に戻ってきたときの読み直し(やることとカレンダー)は、これだけ間を空ける(/api の回数制限のため)
+const REFRESH_INTERVAL_MS = 60 * 1000;
+// 「今日は〇〇の日」の帯の色分け(種類 → CSS クラスの後ろ半分)。知らない名前は other、シフトの予定が無いときは none
+const DAY_BANNER_CLASS = { 入り: 'iri', 明け: 'ake', 日勤: 'nikkin', 休み: 'yasumi', 休予: 'yasumi' };
 
 const HomePage = () => {
   const [user, setUser] = useState(null);
@@ -27,13 +35,37 @@ const HomePage = () => {
   const toggleExpand = (key) => setExpandedSections((prev) => ({ ...prev, [key]: !prev[key] }));
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [weekFilter, setWeekFilter] = useState('thisWeek');
+  // Notion の DB「やること」の「1時間」の行(サーバーが優先の順に並べて返す)。null は読み込み前
+  const [yarukoto, setYarukoto] = useState(null);
+  // 読めなかった理由: 'unconfigured'(サーバーに Notion の鍵が無い) / 'failed'(それ以外)
+  const [yarukotoError, setYarukotoError] = useState(null);
+  // チェックを Notion に書き戻せなかったときの短い知らせ
+  const [yarukotoNotice, setYarukotoNotice] = useState(null);
+  // 書き込み中の行の id(同じ行を続けて押させない)
+  const [yarukotoPending, setYarukotoPending] = useState([]);
+  // 名前を押して開いている行の id(完了条件・出典・Notionで開く が出ている行)
+  const [yarukotoOpenIds, setYarukotoOpenIds] = useState([]);
+  // 休みの日に畳んである「今週のやること」を開いているか
+  const [restListOpen, setRestListOpen] = useState(false);
+  // やることを最後に読み始めた時刻(Date.now())。画面に戻ったときの読み直しを1分に1回までにする(初回の読み込みも数える)
+  const lastRefreshAt = useRef(0);
+  // やることを一度でも読めたか。読めたあとの失敗では、画面の一覧をそのままにする
+  const yarukotoLoaded = useRef(false);
+  // 行のチェックを最後に触った時刻(id → Date.now())。読み直しの返事が来たとき、あとから触った行は手元を優先する
+  const touchedAt = useRef(new Map());
+  // 書き込み中の行の id(上の yarukotoPending と同じものを、描画を待たずにすぐ見られるようにした写し)
+  const pendingRef = useRef([]);
+  // 画面に戻ったときに動かす関数(毎回の描画で最新に差し替える)
+  const refreshRef = useRef(null);
 
   useEffect(() => {
     const fetchUser = async () => {
       try {
         const response = await axios.get('/api/user');
         setUser(response.data);
-        
+
+        // Notion は待たない: 遅くても、ほかのカードの表示を止めない
+        fetchYarukoto();
         await fetchCalendarEvents();
         await fetchTasks();
       } catch (error) {
@@ -62,6 +94,95 @@ const HomePage = () => {
       console.error('Error fetching tasks:', error);
     }
   };
+
+  const fetchYarukoto = async () => {
+    const startedAt = Date.now();
+    lastRefreshAt.current = startedAt;
+    try {
+      const response = await axios.get('/api/yarukoto');
+      const items = Array.isArray(response.data?.items) ? response.data.items : [];
+      // 読んでいる間に自分で触った行(チェックを押した・書き込み中)は、返事より手元を優先する:
+      // 返事は、その書き込みが Notion に届く前の状態かもしれない
+      setYarukoto((prev) => {
+        if (!prev) return items;
+        const mine = new Map(prev.map((item) => [item.id, item]));
+        return items.map((item) => {
+          const touched = touchedAt.current.get(item.id);
+          const keepMine = pendingRef.current.includes(item.id) || (touched !== undefined && touched >= startedAt);
+          return keepMine && mine.has(item.id) ? mine.get(item.id) : item;
+        });
+      });
+      yarukotoLoaded.current = true;
+      setYarukotoError(null);
+    } catch (error) {
+      if (yarukotoLoaded.current) {
+        // 一度読めたあとの失敗(混雑など)では、画面の一覧を消さない
+        console.error('Error refreshing yarukoto:', error);
+        return;
+      }
+      // 503 は「鍵が未設定」。ただし混雑のときも 503 なので、その本文のときは「読めなかった」に回す
+      const notConfigured =
+        error?.response?.status === 503 && error.response.data?.error !== YARUKOTO_BUSY_MESSAGE;
+      setYarukoto([]);
+      setYarukotoError(notConfigured ? 'unconfigured' : 'failed');
+      if (!notConfigured) console.error('Error fetching yarukoto:', error);
+    }
+  };
+
+  // 画面に戻ってきたとき(visibilitychange で表示に戻った・窓に focus が戻った)に、やることとカレンダーを
+  // 読み直す。1分に1回まで。日付が変わっていれば、読み直したカレンダーで「今日は〇〇の日」も変わる
+  const refreshWhenBack = () => {
+    if (document.visibilityState === 'hidden') return;
+    if (Date.now() - lastRefreshAt.current < REFRESH_INTERVAL_MS) return;
+    fetchYarukoto();
+    fetchCalendarEvents();
+  };
+  refreshRef.current = refreshWhenBack;
+
+  useEffect(() => {
+    if (!user) return undefined;
+    const onBack = () => {
+      if (refreshRef.current) refreshRef.current();
+    };
+    document.addEventListener('visibilitychange', onBack);
+    window.addEventListener('focus', onBack);
+    return () => {
+      document.removeEventListener('visibilitychange', onBack);
+      window.removeEventListener('focus', onBack);
+    };
+  }, [user]);
+
+  const replaceYarukoto = (id, next) =>
+    setYarukoto((prev) => (prev || []).map((item) => (item.id === id ? next : item)));
+
+  // チェック → Notion の「済」を書き換える。先に画面を変え、成功したらそのまま
+  // (一覧は GET し直さない: /api の回数制限を食うため)。失敗したら元に戻して短い知らせを出す。
+  // 済にした行は「いま更新した」ことにする(lastEdited): 今日済ませた行として「今日の目標」に数えるため。
+  // 読み直せば Notion の本当の最終更新日時に入れ替わる。チェックを押しても、行は開閉しない
+  const handleToggleYarukoto = async (item) => {
+    if (pendingRef.current.includes(item.id)) return;
+    const nextDone = !item.done;
+    setYarukotoNotice(null);
+    pendingRef.current = [...pendingRef.current, item.id];
+    setYarukotoPending(pendingRef.current);
+    touchedAt.current.set(item.id, Date.now());
+    replaceYarukoto(item.id, { ...item, done: nextDone, lastEdited: nextDone ? new Date().toISOString() : item.lastEdited });
+    try {
+      await axios.patch(`/api/yarukoto/${encodeURIComponent(item.id)}`, { done: nextDone });
+    } catch (error) {
+      console.error('Error updating yarukoto:', error);
+      replaceYarukoto(item.id, item);
+      setYarukotoNotice('Notion に反映できませんでした。もう一度試してください');
+    } finally {
+      touchedAt.current.set(item.id, Date.now());
+      pendingRef.current = pendingRef.current.filter((id) => id !== item.id);
+      setYarukotoPending(pendingRef.current);
+    }
+  };
+
+  // 行の名前を押すと開く(完了条件・出典・Notionで開く)。もう一度押すと閉じる
+  const handleToggleYarukotoOpen = (item) =>
+    setYarukotoOpenIds((prev) => (prev.includes(item.id) ? prev.filter((id) => id !== item.id) : [...prev, item.id]));
 
   const handleLogin = () => {
     window.location.href = '/auth/google';
@@ -171,16 +292,53 @@ const HomePage = () => {
   const handleCarryOverAll = () =>
     carryOver(categoryFilter === 'all' ? null : overdueTasks.map((t) => t.id));
   const todayProgress = combinedProgress(tasks?.daily, calendarEvents?.today);
-  // 週次の進捗は今週の週間タスクだけで数える(来週・後でのタスクは含めない)
+
+  // Notion「やること」の行は、週(今週/来週/後で)ごとに分ける。順番はサーバーが付けた優先の順のまま。
+  // 予定週が今週の月曜より前の行(先週以前の未済)は「今週」に持ち越して出す。week.js の getWeekBucket は
+  // 今週・来週以外をすべて「後で」にするので、その前にここで見る('YYYY-MM-DD' なので文字列のまま比べられる)
+  const yarukotoRows = yarukoto || [];
+  const thisMonday = getMondayISO(new Date(), 0);
+  const yarukotoBucket = (t) =>
+    t.weekStart && t.weekStart < thisMonday ? 'thisWeek' : getWeekBucket(t.weekStart, new Date());
+  // 週次の進捗は「今週のやることの行」＋「カレンダーの今週の予定」で数える(来週・後でのやることは含めない)
   const weekProgress = combinedProgress(
-    (tasks?.weekly || []).filter((t) => getWeekBucket(t.weekStart, new Date()) === 'thisWeek'),
+    yarukotoRows.filter((t) => yarukotoBucket(t) === 'thisWeek').map((t) => ({ completed: t.done })),
     calendarEvents?.thisWeek
   );
 
-  // 週フィルタ(今週/来週/後で) + カテゴリフィルタを両方適用した週間タスク
-  const weeklyTasksFiltered = (tasks?.weekly || [])
-    .filter((t) => getWeekBucket(t.weekStart, new Date()) === weekFilter)
-    .filter(matchesCategoryFilter);
+  // 今日がどんな日か(「今日は〇〇の日」の帯と、今日の目標の数)。カレンダーの今日の「シフト：」の予定から読む
+  const dayInfo = getDayInfo(calendarEvents?.today);
+  const dayBannerClass = dayInfo.kind === null ? 'none' : DAY_BANNER_CLASS[dayInfo.kind] || 'other';
+
+  // カテゴリのボタンで絞った「やること」(このカード全体に効く。絞った中で今日の目標の数を数える)
+  const yarukotoShown = yarukotoRows.filter(matchesCategoryFilter);
+  // 「今週」のとき: 今日の目標 / できたら前倒し / 今週済み の振り分け
+  const todayPlan = planYarukoto({
+    rows: yarukotoShown,
+    goal: dayInfo.goal,
+    isThisWeek: (t) => yarukotoBucket(t) === 'thisWeek',
+    now: new Date(),
+  });
+  // 「来週」「後で」のとき: 1本の一覧(未済が上、済は下。それぞれサーバーの優先の順のまま)
+  const yarukotoOfWeek = yarukotoShown.filter((t) => yarukotoBucket(t) === weekFilter);
+  const yarukotoPlainList = [...yarukotoOfWeek.filter((t) => !t.done), ...yarukotoOfWeek.filter((t) => t.done)];
+
+  const renderYarukotoItem = (item) => (
+    <YarukotoItem
+      key={item.id}
+      item={item}
+      open={yarukotoOpenIds.includes(item.id)}
+      disabled={yarukotoPending.includes(item.id)}
+      onToggle={handleToggleYarukoto}
+      onToggleOpen={handleToggleYarukotoOpen}
+    />
+  );
+  const renderYarukotoList = (rows) =>
+    rows.length > 0 ? rows.map(renderYarukotoItem) : <div className="yarukoto-message">該当するやることはありません</div>;
+  const doneEarlierLine =
+    todayPlan.doneEarlierCount > 0 ? (
+      <div className="yarukoto-done-earlier">今週済み {todayPlan.doneEarlierCount}件</div>
+    ) : null;
 
   const formatTime = (dateString) => {
     if (!dateString) return '';
@@ -280,9 +438,15 @@ const HomePage = () => {
 
       {user ? (
         <div className="main-content fade-in">
-          {/* Main Area - Today's Focus */}
+          {/* Main Area - Today's Focus。上から: 今日は〇〇の日 → カテゴリのボタン → やること(Notion) → 今日の予定 → 今日のタスク */}
           <div className="today-section">
-            <h2 style={{ 
+            {/* 今日は〇〇の日: カレンダーの今日の「シフト：」の予定から読む(使える時間から予定は差し引かない) */}
+            <section className={`day-banner day-banner-${dayBannerClass}`} aria-label="今日はどんな日か">
+              <div className="day-banner-title">{dayInfo.line1}</div>
+              {dayInfo.line2 && <div className="day-banner-hint">{dayInfo.line2}</div>}
+            </section>
+
+            <h2 style={{
               margin: '0 0 24px 0',
               color: '#333',
               fontSize: '24px',
@@ -294,7 +458,7 @@ const HomePage = () => {
               今日のフォーカス
             </h2>
 
-            {/* Category filter: applies to daily tasks below and to the weekly list in the sidebar */}
+            {/* Category filter: applies to the やること(Notion) card and the daily tasks below */}
             <div className="category-filter-button-group" style={{ marginBottom: '24px' }}>
               {CATEGORY_FILTERS.map((c) => (
                 <button
@@ -306,6 +470,93 @@ const HomePage = () => {
                   {c === 'all' ? 'すべて' : c}
                 </button>
               ))}
+            </div>
+
+            {/* Notion「やること」: 「今週」は 今日の目標 → できたら前倒し → 今週済み。「来週」「後で」は1本の一覧 */}
+            <div className="yarukoto-card">
+              <h3 style={{
+                color: '#555',
+                fontSize: '18px',
+                marginBottom: '16px',
+                fontWeight: '600'
+              }}>
+                やること（Notion）
+              </h3>
+              {yarukotoError ? (
+                <div className="yarukoto-message">
+                  {yarukotoError === 'unconfigured' ? 'Notion の鍵が未設定です' : 'Notion から読めませんでした'}
+                </div>
+              ) : yarukoto === null ? (
+                <div className="yarukoto-message">読み込み中...</div>
+              ) : (
+                <>
+                  <div className="week-filter-button-group" style={{ marginBottom: '12px' }}>
+                    {WEEK_FILTERS.map(([key, label]) => (
+                      <button
+                        type="button"
+                        key={key}
+                        className={`week-filter-btn${weekFilter === key ? ' active' : ''}`}
+                        onClick={() => setWeekFilter(key)}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  {yarukotoNotice && <div className="error-message" role="alert">{yarukotoNotice}</div>}
+                  {weekFilter !== 'thisWeek' ? (
+                    renderYarukotoList(yarukotoPlainList)
+                  ) : (
+                    <>
+                      {todayPlan.mode === 'goal' && (
+                        <>
+                          <section className="yarukoto-section" aria-labelledby="yarukoto-goal-title">
+                            <div className="yarukoto-section-head">
+                              <h4 id="yarukoto-goal-title" className="yarukoto-section-title">今日の目標</h4>
+                              <span className="yarukoto-section-count">済 {todayPlan.doneCount} / {todayPlan.goal}</span>
+                            </div>
+                            {todayPlan.achieved && <div className="yarukoto-achieved">今日の目標は達成</div>}
+                            {renderYarukotoList(todayPlan.goalRows)}
+                          </section>
+                          {todayPlan.extraRows.length > 0 && (
+                            <section className="yarukoto-section yarukoto-section-extra" aria-labelledby="yarukoto-extra-title">
+                              <div className="yarukoto-section-head">
+                                <h4 id="yarukoto-extra-title" className="yarukoto-section-title">できたら前倒し</h4>
+                              </div>
+                              {todayPlan.extraRows.map(renderYarukotoItem)}
+                            </section>
+                          )}
+                        </>
+                      )}
+                      {todayPlan.mode === 'rest' && (
+                        <>
+                          <section className="yarukoto-section" aria-labelledby="yarukoto-goal-title">
+                            <div className="yarukoto-section-head">
+                              <h4 id="yarukoto-goal-title" className="yarukoto-section-title">今日の目標</h4>
+                            </div>
+                            <div className="yarukoto-rest">休みの日なので、事業の作業は入れません</div>
+                          </section>
+                          <button
+                            type="button"
+                            className="yarukoto-rest-toggle"
+                            aria-expanded={restListOpen}
+                            onClick={() => setRestListOpen((open) => !open)}
+                          >
+                            今週のやることを見る（{todayPlan.listRows.length}件）
+                          </button>
+                          {restListOpen && renderYarukotoList(todayPlan.listRows)}
+                        </>
+                      )}
+                      {todayPlan.mode === 'free' && (
+                        <>
+                          <div className="yarukoto-free-note">今日の目標は出していません</div>
+                          {renderYarukotoList(todayPlan.listRows)}
+                        </>
+                      )}
+                      {doneEarlierLine}
+                    </>
+                  )}
+                </>
+              )}
             </div>
 
             {/* Today's Calendar Events */}
@@ -585,37 +836,6 @@ const HomePage = () => {
                     </div>
                   ))}
                   
-                  {/* Weekly Goals */}
-                  <div style={{ marginLeft: '45px', marginBottom: '12px' }}>
-                    <div style={{ fontWeight: '600', color: '#689f38', marginBottom: '8px' }}>週間タスク</div>
-                    <div className="week-filter-button-group" style={{ marginBottom: '8px' }}>
-                      {WEEK_FILTERS.map(([key, label]) => (
-                        <button
-                          type="button"
-                          key={key}
-                          className={`week-filter-btn${weekFilter === key ? ' active' : ''}`}
-                          onClick={() => setWeekFilter(key)}
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                    {weeklyTasksFiltered.length > 0 ? (
-                      weeklyTasksFiltered.map((task) => (
-                        <TaskItem
-                          key={task.id}
-                          task={task}
-                          currentUserId={user.id}
-                          compact
-                          onToggleComplete={handleToggleComplete}
-                          onEdit={handleEditTask}
-                          onDelete={handleDeleteTask}
-                        />
-                      ))
-                    ) : (
-                      <div style={{ fontSize: '12px', color: '#888' }}>該当する週間タスクはありません</div>
-                    )}
-                  </div>
                 </div>
               )}
             </div>

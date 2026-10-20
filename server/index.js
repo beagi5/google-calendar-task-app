@@ -8,6 +8,7 @@ const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
 const validator = require('validator');
 const crypto = require('crypto');
+const notion = require('./notion');
 
 // Security middleware setup
 const app = express();
@@ -1003,6 +1004,23 @@ claudeApi.use((req, res) => {
 
 app.use('/api/claude', claudeApi);
 
+// ---------------------------------------------------------------------------
+// Notion DB "やること": the screen's "やること（Notion）" card reads the 1-hour rows here and
+// writes the "済" checkbox back (the logic is in notion.js).
+//
+// - Enabled only when both NOTION_TOKEN and NOTION_YARUKOTO_DATA_SOURCE_ID are set (surrounding
+//   whitespace is ignored). Otherwise both routes answer 503. The routes are registered either way:
+//   if they were not, a GET would fall through to the SPA fallback below and come back as index.html (200).
+//   Optional: NOTION_API_BASE (default https://api.notion.com, for tests) and NOTION_VERSION (default 2026-03-11).
+// - requireAuth (Google login) is in front of both, and they sit under /api, so apiLimiter applies.
+// - The token stays on the server: it is never sent to the browser, logged or put in a response.
+// ---------------------------------------------------------------------------
+const yarukoto = notion.createYarukotoFromEnv(process.env);
+const yarukotoRoutes = notion.createRoutes(yarukoto);
+
+app.get('/api/yarukoto', requireAuth, yarukotoRoutes.list);
+app.patch('/api/yarukoto/:pageId', requireAuth, yarukotoRoutes.update);
+
 app.get('/logout', requireAuth, (req, res, next) => {
   req.logout(function(err) {
     if (err) { return next(err); }
@@ -1036,4 +1054,5 @@ const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`Secure server running on port ${PORT}`);
   console.log(CLAUDE_API_ENABLED ? 'Claude API: enabled' : 'Claude API: disabled (token or owner id not set)');
+  console.log(yarukoto ? 'Notion yarukoto: enabled' : 'Notion yarukoto: disabled (token or data source id not set)');
 });
