@@ -1,6 +1,7 @@
 // 「今日は〇〇の日」の判定と、やることカードの「今日の目標」の振り分け。
 // どちらも副作用の無い関数で、画面の部品から切り離してある(src/utils/day.test.js で単体テストする)。
 // 日付はローカル時間で見る(week.js と同じ)。
+import { getWeekBucket } from './week';
 
 // 予定の件名が「シフト：入り」の形か。全角のコロン「：」も半角の「:」も読む
 const SHIFT_PREFIX = /^シフト[：:]/;
@@ -9,18 +10,31 @@ const SHIFT_PREFIX = /^シフト[：:]/;
 // シフトの予定をうっかり完了にしても、帯が消えないように読み飛ばす
 const COMPLETED_PREFIX = /^\[完了\]\s*/;
 
-// 知っているシフトの名前 → 2行目の文と、今日の目標の数。
-// 使える時間の目安から、その日の予定(MTG など)は差し引かない。
-// 休予(休みの予定)はカレンダーに名前が無く、休みと見分けられない扱い: どちらも目標は 0。
-// 「休予」という名前の予定が来たときも、休みと同じに読む
-const REST_DAY = { hint: '事業の作業は入れない日（撮影・ロケハンのみ）', goal: 0 };
+// 知っているシフトの名前 → 2行目の文と、今日の目標の数(1つ＝1コマ＝60分)。
+// 数は yarukoto の「週に入れるコマの数」(2026-10-21 本人の指定)に合わせる: 入り 6／明け 6(18時締め)／
+// 日勤 3(18時以降)／休予 0。
+// 休みの使い方は、月の計画で本人が決めたものをシフト名に書く(2026-10-21 本人の選択「カレンダーのシフト名に書く」):
+//   「休み（事業）」＝事業のコマを入れる日 8／「休み（撮影）」「休み（休む）」＝0／「休み」のまま＝未決(目標は出さない)
+// 使える時間の目安から、その日の予定(MTG など)は差し引かない(2026-10-20 本人の選択)
 const KNOWN_SHIFTS = new Map([
-  ['入り', { hint: '使える時間の目安: 1時間 × 2', goal: 2 }],
-  ['明け', { hint: '使える時間の目安: 1時間 × 4（18時まで。仮眠が短い日は減らす）', goal: 4 }],
-  ['日勤', { hint: '使える時間の目安: 18時以降に軽いものを1つ', goal: 1 }],
-  ['休み', REST_DAY],
-  ['休予', REST_DAY],
+  ['入り', { hint: '使える時間の目安: 1時間 × 6', goal: 6 }],
+  ['明け', { hint: '使える時間の目安: 1時間 × 6（18時まで。仮眠が短い日は減らす）', goal: 6 }],
+  ['日勤', { hint: '使える時間の目安: 18時以降に 1時間 × 3', goal: 3 }],
+  ['休み（事業）', { hint: '事業に使う休み。使える時間の目安: 1時間 × 8', goal: 8 }],
+  ['休み（撮影）', { hint: '撮影の日（事業のコマは入れない）', goal: 0 }],
+  ['休み（休む）', { hint: '休むと決めた日（事業の作業は入れない）', goal: 0 }],
+  [
+    '休み',
+    {
+      hint: '休みの使い方が決まっていません（事業に使う日は 1時間 × 8。決めたらシフト名を「休み（事業）」「休み（撮影）」「休み（休む）」に）',
+      goal: null,
+    },
+  ],
+  ['休予', { hint: '事業の作業は入れない日（アイデアのメモのみ）', goal: 0 }],
 ]);
+
+// 「休み(事業)」のような半角のかっこや、名前の中の空白も同じに読む
+const normalizeKind = (kind) => kind.replace(/\(/g, '（').replace(/\)/g, '）').replace(/[\s　]+/g, '');
 
 export const NO_SHIFT_LINE = '今日のシフトがカレンダーにありません';
 
@@ -36,7 +50,7 @@ export const getDayInfo = (events) => {
     const summary = typeof event?.summary === 'string' ? event.summary.trim().replace(COMPLETED_PREFIX, '') : '';
     const prefix = SHIFT_PREFIX.exec(summary);
     if (!prefix) continue;
-    const kind = summary.slice(prefix[0].length).trim();
+    const kind = normalizeKind(summary.slice(prefix[0].length));
     if (kind === '') continue;
     const known = KNOWN_SHIFTS.get(kind);
     return {
@@ -47,6 +61,18 @@ export const getDayInfo = (events) => {
     };
   }
   return { kind: null, line1: NO_SHIFT_LINE, line2: null, goal: null };
+};
+
+// やることの行の週('thisWeek'/'nextWeek'/'later')。
+// 「今週」は Notion の今週ビューと同じく「予定週が明日以前」(2026-10-21〜)。先週以前の未済の持ち越しも入り、
+// 日曜は翌週の月曜(＝明日)の行も今週に出る。それ以外は week.js の getWeekBucket(来週／後で)。
+// 予定週は 'YYYY-MM-DD' なので文字列のまま比べられる
+export const yarukotoWeekBucket = (weekStart, now = new Date()) => {
+  const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  const pad = (n) => String(n).padStart(2, '0');
+  const tomorrowISO = `${tomorrow.getFullYear()}-${pad(tomorrow.getMonth() + 1)}-${pad(tomorrow.getDate())}`;
+  if (typeof weekStart === 'string' && weekStart !== '' && weekStart <= tomorrowISO) return 'thisWeek';
+  return getWeekBucket(weekStart, now);
 };
 
 // ISO の日時の文字列('2026-10-20T08:15:30.123Z' など)が、now と同じローカルの日か。読めない値は false

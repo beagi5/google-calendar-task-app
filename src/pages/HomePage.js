@@ -5,8 +5,7 @@ import TaskItem from '../components/TaskItem';
 import YarukotoItem from '../components/YarukotoItem';
 import EventDetailModal from '../components/EventDetailModal';
 import '../components/TaskManager.css';
-import { getMondayISO, getWeekBucket } from '../utils/week';
-import { getDayInfo, planYarukoto } from '../utils/day';
+import { getDayInfo, planYarukoto, yarukotoWeekBucket } from '../utils/day';
 
 axios.defaults.withCredentials = true;
 
@@ -21,7 +20,16 @@ const YARUKOTO_BUSY_MESSAGE = 'Notion is busy, try again later';
 // 画面に戻ってきたときの読み直し(やることとカレンダー)は、これだけ間を空ける(/api の回数制限のため)
 const REFRESH_INTERVAL_MS = 60 * 1000;
 // 「今日は〇〇の日」の帯の色分け(種類 → CSS クラスの後ろ半分)。知らない名前は other、シフトの予定が無いときは none
-const DAY_BANNER_CLASS = { 入り: 'iri', 明け: 'ake', 日勤: 'nikkin', 休み: 'yasumi', 休予: 'yasumi' };
+const DAY_BANNER_CLASS = {
+  入り: 'iri',
+  明け: 'ake',
+  日勤: 'nikkin',
+  休み: 'yasumi',
+  '休み（事業）': 'yasumi',
+  '休み（撮影）': 'yasumi',
+  '休み（休む）': 'yasumi',
+  休予: 'yasumi',
+};
 
 const HomePage = () => {
   const [user, setUser] = useState(null);
@@ -294,12 +302,9 @@ const HomePage = () => {
   const todayProgress = combinedProgress(tasks?.daily, calendarEvents?.today);
 
   // Notion「やること」の行は、週(今週/来週/後で)ごとに分ける。順番はサーバーが付けた優先の順のまま。
-  // 予定週が今週の月曜より前の行(先週以前の未済)は「今週」に持ち越して出す。week.js の getWeekBucket は
-  // 今週・来週以外をすべて「後で」にするので、その前にここで見る('YYYY-MM-DD' なので文字列のまま比べられる)
+  // 「今週」は「予定週が明日以前」(day.js の yarukotoWeekBucket。Notion の今週ビューと同じ)
   const yarukotoRows = yarukoto || [];
-  const thisMonday = getMondayISO(new Date(), 0);
-  const yarukotoBucket = (t) =>
-    t.weekStart && t.weekStart < thisMonday ? 'thisWeek' : getWeekBucket(t.weekStart, new Date());
+  const yarukotoBucket = (t) => yarukotoWeekBucket(t.weekStart, new Date());
   // 週次の進捗は「今週のやることの行」＋「カレンダーの今週の予定」で数える(来週・後でのやることは含めない)
   const weekProgress = combinedProgress(
     yarukotoRows.filter((t) => yarukotoBucket(t) === 'thisWeek').map((t) => ({ completed: t.done })),
@@ -533,7 +538,7 @@ const HomePage = () => {
                             <div className="yarukoto-section-head">
                               <h4 id="yarukoto-goal-title" className="yarukoto-section-title">今日の目標</h4>
                             </div>
-                            <div className="yarukoto-rest">休みの日なので、事業の作業は入れません</div>
+                            <div className="yarukoto-rest">今日は事業の作業を入れない日です</div>
                           </section>
                           <button
                             type="button"

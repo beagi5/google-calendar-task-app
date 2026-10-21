@@ -1,52 +1,79 @@
-import { getDayInfo, isSameLocalDay, planYarukoto, NO_SHIFT_LINE } from './day';
+import { getDayInfo, isSameLocalDay, planYarukoto, yarukotoWeekBucket, NO_SHIFT_LINE } from './day';
 
 const event = (summary) => ({ id: 'e', summary, start: { date: '2026-10-20' } });
 
 // --- getDayInfo: 「今日は〇〇の日」(表の6通り) ---
 
-test('入り (full-width colon): 今日は入りの日 / 1時間 × 2 / goal 2', () => {
+test('入り (full-width colon): 今日は入りの日 / 1時間 × 6 / goal 6', () => {
   expect(getDayInfo([event('シフト：入り')])).toEqual({
     kind: '入り',
     line1: '今日は入りの日',
-    line2: '使える時間の目安: 1時間 × 2',
-    goal: 2,
+    line2: '使える時間の目安: 1時間 × 6',
+    goal: 6,
   });
 });
 
-test('明け (half-width colon): 今日は明けの日 / 1時間 × 4（18時まで。仮眠が短い日は減らす） / goal 4', () => {
+test('明け (half-width colon): 今日は明けの日 / 1時間 × 6（18時まで。仮眠が短い日は減らす） / goal 6', () => {
   expect(getDayInfo([event('シフト:明け')])).toEqual({
     kind: '明け',
     line1: '今日は明けの日',
-    line2: '使える時間の目安: 1時間 × 4（18時まで。仮眠が短い日は減らす）',
-    goal: 4,
+    line2: '使える時間の目安: 1時間 × 6（18時まで。仮眠が短い日は減らす）',
+    goal: 6,
   });
 });
 
-test('日勤 with spaces around the name (half- and full-width): 18時以降に軽いものを1つ / goal 1', () => {
+test('日勤 with spaces around the name (half- and full-width): 18時以降に 1時間 × 3 / goal 3', () => {
   const expected = {
     kind: '日勤',
     line1: '今日は日勤の日',
-    line2: '使える時間の目安: 18時以降に軽いものを1つ',
-    goal: 1,
+    line2: '使える時間の目安: 18時以降に 1時間 × 3',
+    goal: 3,
   };
   expect(getDayInfo([event('シフト： 日勤 ')])).toEqual(expected);
   expect(getDayInfo([event('シフト:　日勤　')])).toEqual(expected);
   expect(getDayInfo([event('  シフト：日勤')])).toEqual(expected);
 });
 
-test('休み: 今日は休みの日 / 事業の作業は入れない日（撮影・ロケハンのみ） / goal 0', () => {
-  expect(getDayInfo([event('シフト：休み')])).toEqual({
-    kind: '休み',
-    line1: '今日は休みの日',
-    line2: '事業の作業は入れない日（撮影・ロケハンのみ）',
+test('休み（事業）: a day off used for the business / 1時間 × 8 / goal 8 (half-width brackets and spaces too)', () => {
+  const expected = {
+    kind: '休み（事業）',
+    line1: '今日は休み（事業）の日',
+    line2: '事業に使う休み。使える時間の目安: 1時間 × 8',
+    goal: 8,
+  };
+  expect(getDayInfo([event('シフト：休み（事業）')])).toEqual(expected);
+  expect(getDayInfo([event('シフト：休み(事業)')])).toEqual(expected);
+  expect(getDayInfo([event('シフト： 休み （事業） ')])).toEqual(expected);
+});
+
+test('休み（撮影） and 休み（休む）: goal 0, each with its own line', () => {
+  expect(getDayInfo([event('シフト：休み（撮影）')])).toEqual({
+    kind: '休み（撮影）',
+    line1: '今日は休み（撮影）の日',
+    line2: '撮影の日（事業のコマは入れない）',
+    goal: 0,
+  });
+  expect(getDayInfo([event('シフト：休み(休む)')])).toEqual({
+    kind: '休み（休む）',
+    line1: '今日は休み（休む）の日',
+    line2: '休むと決めた日（事業の作業は入れない）',
     goal: 0,
   });
 });
 
-test('休予 is read as 休み (goal 0), because the calendar cannot tell them apart', () => {
+test('休み with no use decided: the hint says so, and there is no goal (null)', () => {
+  expect(getDayInfo([event('シフト：休み')])).toEqual({
+    kind: '休み',
+    line1: '今日は休みの日',
+    line2: '休みの使い方が決まっていません（事業に使う日は 1時間 × 8。決めたらシフト名を「休み（事業）」「休み（撮影）」「休み（休む）」に）',
+    goal: null,
+  });
+});
+
+test('休予: goal 0 (ideas only)', () => {
   const info = getDayInfo([event('シフト：休予')]);
   expect(info.goal).toBe(0);
-  expect(info.line2).toBe('事業の作業は入れない日（撮影・ロケハンのみ）');
+  expect(info.line2).toBe('事業の作業は入れない日（アイデアのメモのみ）');
 });
 
 test('a name that is not known: 今日は（名前）の日, no hint, no goal (null)', () => {
@@ -89,7 +116,7 @@ test('other events are skipped, and the first shift event wins', () => {
 });
 
 test('a shift event that the screen marked done ([完了] in front) is still read', () => {
-  expect(getDayInfo([event('[完了] シフト：入り')]).goal).toBe(2);
+  expect(getDayInfo([event('[完了] シフト：入り')]).goal).toBe(6);
 });
 
 test('a bad list does not throw: no summary, not an object, names that look like object properties', () => {
@@ -243,4 +270,25 @@ test('planYarukoto uses the given "now" for what is today', () => {
   expect(ids(planYarukoto({ rows, goal: 1, isThisWeek, now: new Date(2026, 9, 21, 10) }).goalRows)).toEqual(['d1']);
   expect(planYarukoto({ rows, goal: 1, isThisWeek, now: new Date(2026, 9, 21, 10) }).achieved).toBe(true);
   expect(planYarukoto({ rows, goal: 1, isThisWeek, now: new Date(2026, 9, 22, 10) }).achieved).toBe(false);
+});
+
+// --- yarukotoWeekBucket: 今週 = 予定週が明日以前 (Notion の今週ビューと同じ, 2026-10-21) ---
+
+test('on a weekday: this week and earlier weeks are 今週, next week is 来週, later or none is 後で', () => {
+  const wed = new Date(2026, 9, 21, 12); // 2026-10-21 (水)
+  expect(yarukotoWeekBucket('2026-10-19', wed)).toBe('thisWeek');
+  expect(yarukotoWeekBucket('2026-10-12', wed)).toBe('thisWeek'); // 先週の持ち越し
+  expect(yarukotoWeekBucket('2026-10-26', wed)).toBe('nextWeek');
+  expect(yarukotoWeekBucket('2026-11-02', wed)).toBe('later');
+  expect(yarukotoWeekBucket(null, wed)).toBe('later');
+  expect(yarukotoWeekBucket('', wed)).toBe('later');
+});
+
+test('on Sunday, next week (its Monday is tomorrow) is already 今週; on Saturday it is still 来週', () => {
+  const sun = new Date(2026, 9, 25, 9); // 2026-10-25 (日)
+  const sat = new Date(2026, 9, 24, 9); // 2026-10-24 (土)
+  expect(yarukotoWeekBucket('2026-10-26', sun)).toBe('thisWeek');
+  expect(yarukotoWeekBucket('2026-10-19', sun)).toBe('thisWeek');
+  expect(yarukotoWeekBucket('2026-11-02', sun)).toBe('later');
+  expect(yarukotoWeekBucket('2026-10-26', sat)).toBe('nextWeek');
 });

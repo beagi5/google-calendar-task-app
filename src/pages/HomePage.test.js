@@ -322,20 +322,21 @@ test('two rows can be open at the same time, and a row stays open when it moves 
     yarukotoRow('y1', '優先1の作業', thisMonday(), { priority: 1, criteria: '条件1' }),
     yarukotoRow('y2', '優先2の作業', thisMonday(), { priority: 2, criteria: '条件2' }),
     yarukotoRow('y3', '優先3の作業', thisMonday(), { priority: 3, criteria: '条件3' }),
-  ], { today: [shiftEvent('入り')] });
+    yarukotoRow('y4', '優先4の作業', thisMonday(), { priority: 4, criteria: '条件4' }),
+  ], { today: [shiftEvent('日勤')] });
   render(<HomePage />);
   await screen.findByRole('region', { name: 'できたら前倒し' });
 
   userEvent.click(screen.getByText('優先1の作業'));
-  userEvent.click(screen.getByText('優先3の作業'));
+  userEvent.click(screen.getByText('優先4の作業'));
   expect(screen.getByText('条件1')).toBeInTheDocument();
-  expect(screen.getByText('条件3')).toBeInTheDocument();
+  expect(screen.getByText('条件4')).toBeInTheDocument();
   expect(screen.queryByText('条件2')).not.toBeInTheDocument();
 
-  // 前倒しにあった優先3を済にすると、今日の目標のほうへ移る。開いたまま
-  userEvent.click(screen.getByRole('checkbox', { name: '優先3の作業' }));
-  await waitFor(() => expect(within(screen.getByRole('region', { name: '今日の目標' })).getByRole('checkbox', { name: '優先3の作業' })).toBeChecked());
-  expect(screen.getByText('条件3')).toBeInTheDocument();
+  // 前倒しにあった優先4を済にすると、今日の目標のほうへ移る。開いたまま
+  userEvent.click(screen.getByRole('checkbox', { name: '優先4の作業' }));
+  await waitFor(() => expect(within(screen.getByRole('region', { name: '今日の目標' })).getByRole('checkbox', { name: '優先4の作業' })).toBeChecked());
+  expect(screen.getByText('条件4')).toBeInTheDocument();
   expect(screen.getByText('条件1')).toBeInTheDocument();
 });
 
@@ -572,27 +573,31 @@ test('[⑭] the やること card is in the main column (band → category butto
 
 // --- 今日は〇〇の日 (the band) ---
 
-test('[⑧] 今日の予定に「シフト：入り」があると、メインの列の一番上の帯に「今日は入りの日」と「1時間 × 2」が出る', async () => {
+test('[⑧] 今日の予定に「シフト：入り」があると、メインの列の一番上の帯に「今日は入りの日」と「1時間 × 6」が出る', async () => {
   setup([], [], { today: [shiftEvent('入り')] });
   render(<HomePage />);
 
   const title = await screen.findByText('今日は入りの日');
   const band = title.closest('.day-banner');
-  expect(within(band).getByText('使える時間の目安: 1時間 × 2')).toBeInTheDocument();
-  expect(within(band).getByText(/1時間 × 2/)).toBeInTheDocument();
+  expect(within(band).getByText('使える時間の目安: 1時間 × 6')).toBeInTheDocument();
+  expect(within(band).getByText(/1時間 × 6/)).toBeInTheDocument();
   expect(band.closest('.today-section').firstElementChild).toBe(band);
   expect(band.closest('.sidebar')).toBeNull();
 });
 
-test('the band for each kind of day: 明け, 日勤, 休み, a name that is not known, and no shift in the calendar', async () => {
+test('the band for each kind of day: 明け, 日勤, 休み (decided or not), 休予, a name that is not known, and no shift in the calendar', async () => {
   const cases = [
-    [[shiftEvent('明け')], '今日は明けの日', '使える時間の目安: 1時間 × 4（18時まで。仮眠が短い日は減らす）'],
-    [[shiftEvent('日勤')], '今日は日勤の日', '使える時間の目安: 18時以降に軽いものを1つ'],
-    [[shiftEvent('休み')], '今日は休みの日', '事業の作業は入れない日（撮影・ロケハンのみ）'],
+    [[shiftEvent('明け')], '今日は明けの日', '使える時間の目安: 1時間 × 6（18時まで。仮眠が短い日は減らす）'],
+    [[shiftEvent('日勤')], '今日は日勤の日', '使える時間の目安: 18時以降に 1時間 × 3'],
+    [[shiftEvent('休み（事業）')], '今日は休み（事業）の日', '事業に使う休み。使える時間の目安: 1時間 × 8'],
+    [[shiftEvent('休み（撮影）')], '今日は休み（撮影）の日', '撮影の日（事業のコマは入れない）'],
+    [[shiftEvent('休み（休む）')], '今日は休み（休む）の日', '休むと決めた日（事業の作業は入れない）'],
+    [[shiftEvent('休み')], '今日は休みの日', '休みの使い方が決まっていません（事業に使う日は 1時間 × 8。決めたらシフト名を「休み（事業）」「休み（撮影）」「休み（休む）」に）'],
+    [[shiftEvent('休予')], '今日は休予の日', '事業の作業は入れない日（アイデアのメモのみ）'],
     [[shiftEvent('早番')], '今日は早番の日', null],
     [[], '今日のシフトがカレンダーにありません', null],
     // 半角のコロン、前後の空白、シフトではない予定が混ざっていても読める
-    [[{ id: 'a', summary: '歯医者', start: { date: dateStr(0) } }, { id: 'b', summary: 'シフト:  日勤 ', start: { date: dateStr(0) } }], '今日は日勤の日', '使える時間の目安: 18時以降に軽いものを1つ'],
+    [[{ id: 'a', summary: '歯医者', start: { date: dateStr(0) } }, { id: 'b', summary: 'シフト:  日勤 ', start: { date: dateStr(0) } }], '今日は日勤の日', '使える時間の目安: 18時以降に 1時間 × 3'],
   ];
   for (const [events, line1, line2] of cases) {
     setup([], [], { today: events });
@@ -611,7 +616,7 @@ test('the usable time is not reduced by the other events of the day', async () =
   render(<HomePage />);
 
   const band = (await screen.findByText('今日は入りの日')).closest('.day-banner');
-  expect(within(band).getByText('使える時間の目安: 1時間 × 2')).toBeInTheDocument();
+  expect(within(band).getByText('使える時間の目安: 1時間 × 6')).toBeInTheDocument();
 });
 
 // --- 今日の目標 / できたら前倒し / 今週済み ---
@@ -621,33 +626,35 @@ const threeRows = () => [
   yarukotoRow('y2', '優先2の作業', thisMonday(), { priority: 2 }),
   yarukotoRow('y3', '優先3の作業', thisMonday(), { priority: 3 }),
 ];
+// 日勤(目標 3)で「目標に入る行」と「前倒しの行」を両方出すための4件
+const fourRows = () => [...threeRows(), yarukotoRow('y4', '優先4の作業', thisMonday(), { priority: 4 })];
 
-test('[⑨] 入りの日、今週の未済3件(優先1・2・3): 今日の目標に1と2、できたら前倒しに3', async () => {
-  setup([], threeRows(), { today: [shiftEvent('入り')] });
+test('[⑨] 日勤の日(目標3)、今週の未済4件(優先1〜4): 今日の目標に1〜3、できたら前倒しに4', async () => {
+  setup([], fourRows(), { today: [shiftEvent('日勤')] });
   render(<HomePage />);
 
   const goal = await screen.findByRole('region', { name: '今日の目標' });
-  expect(rowNames(goal)).toEqual(['優先1の作業', '優先2の作業']);
-  expect(within(goal).getByText('済 0 / 2')).toBeInTheDocument();
+  expect(rowNames(goal)).toEqual(['優先1の作業', '優先2の作業', '優先3の作業']);
+  expect(within(goal).getByText('済 0 / 3')).toBeInTheDocument();
   const extra = screen.getByRole('region', { name: 'できたら前倒し' });
-  expect(rowNames(extra)).toEqual(['優先3の作業']);
+  expect(rowNames(extra)).toEqual(['優先4の作業']);
   expect(screen.queryByText('今日の目標は達成')).not.toBeInTheDocument();
 });
 
-test('[⑩] 入りの日、今日済ませた行1件(lastEdited が今日)＋今週の未済3件: 今日の目標は「済1件＋未済の優先1」、前倒しに残り2件', async () => {
+test('[⑩] 日勤の日(目標3)、今日済ませた行1件(lastEdited が今日)＋今週の未済4件: 今日の目標は「済1件＋未済の優先1・2」、前倒しに残り2件', async () => {
   setup([], [
     // 予定週なし(=後で)の行でも、今日済ませたものは数える
     yarukotoRow('d1', '今日済ませた作業', null, { done: true, lastEdited: editedNow() }),
-    ...threeRows(),
-  ], { today: [shiftEvent('入り')] });
+    ...fourRows(),
+  ], { today: [shiftEvent('日勤')] });
   render(<HomePage />);
 
   const goal = await screen.findByRole('region', { name: '今日の目標' });
-  expect(rowNames(goal)).toEqual(['今日済ませた作業', '優先1の作業']);
+  expect(rowNames(goal)).toEqual(['今日済ませた作業', '優先1の作業', '優先2の作業']);
   expect(within(goal).getByRole('checkbox', { name: '今日済ませた作業' })).toBeChecked();
   expect(within(goal).getByRole('checkbox', { name: '優先1の作業' })).not.toBeChecked();
-  expect(within(goal).getByText('済 1 / 2')).toBeInTheDocument();
-  expect(rowNames(screen.getByRole('region', { name: 'できたら前倒し' }))).toEqual(['優先2の作業', '優先3の作業']);
+  expect(within(goal).getByText('済 1 / 3')).toBeInTheDocument();
+  expect(rowNames(screen.getByRole('region', { name: 'できたら前倒し' }))).toEqual(['優先3の作業', '優先4の作業']);
   expect(screen.queryByText('今日の目標は達成')).not.toBeInTheDocument();
 });
 
@@ -655,48 +662,55 @@ test('as many rows done today as the goal: 「今日の目標は達成」, and e
   setup([], [
     yarukotoRow('d1', '今日済ませた作業1', thisMonday(), { done: true, lastEdited: editedNow() }),
     yarukotoRow('d2', '今日済ませた作業2', nextMonday(), { done: true, lastEdited: editedNow() }),
+    yarukotoRow('d3', '今日済ませた作業3', null, { done: true, lastEdited: editedNow() }),
     ...threeRows(),
-  ], { today: [shiftEvent('入り')] });
+  ], { today: [shiftEvent('日勤')] });
   render(<HomePage />);
 
   const goal = await screen.findByRole('region', { name: '今日の目標' });
   expect(within(goal).getByText('今日の目標は達成')).toBeInTheDocument();
-  expect(rowNames(goal)).toEqual(['今日済ませた作業1', '今日済ませた作業2']);
-  expect(within(goal).getByText('済 2 / 2')).toBeInTheDocument();
+  expect(rowNames(goal)).toEqual(['今日済ませた作業1', '今日済ませた作業2', '今日済ませた作業3']);
+  expect(within(goal).getByText('済 3 / 3')).toBeInTheDocument();
   expect(rowNames(screen.getByRole('region', { name: 'できたら前倒し' }))).toEqual(['優先1の作業', '優先2の作業', '優先3の作業']);
 });
 
-test('the number of rows in 今日の目標 follows the day: 明け 4, 日勤 1', async () => {
-  const rows = [...threeRows(), yarukotoRow('y4', '優先4の作業', thisMonday(), { priority: 4 }), yarukotoRow('y5', '優先5の作業', thisMonday(), { priority: 5 })];
-  for (const [kind, expected] of [['明け', 4], ['日勤', 1]]) {
+test('the number of rows in 今日の目標 follows the day: 入り 6, 明け 6, 日勤 3', async () => {
+  const rows = [...fourRows(), ...[5, 6, 7].map((n) => yarukotoRow(`y${n}`, `優先${n}の作業`, thisMonday(), { priority: n }))];
+  for (const [kind, expected] of [['入り', 6], ['明け', 6], ['日勤', 3]]) {
     setup([], rows, { today: [shiftEvent(kind)] });
     const { unmount } = render(<HomePage />);
     const goal = await screen.findByRole('region', { name: '今日の目標' });
     expect(rowNames(goal)).toHaveLength(expected);
-    expect(rowNames(screen.getByRole('region', { name: 'できたら前倒し' }))).toHaveLength(5 - expected);
+    expect(rowNames(screen.getByRole('region', { name: 'できたら前倒し' }))).toHaveLength(7 - expected);
     unmount();
   }
 });
 
 test('checking rows: a checked row stays in 今日の目標 as done; finishing a 前倒し row counts toward the goal and pushes the next row down', async () => {
-  setup([], threeRows(), { today: [shiftEvent('入り')] });
+  setup([], fourRows(), { today: [shiftEvent('日勤')] });
   render(<HomePage />);
   const goalRegion = () => screen.getByRole('region', { name: '今日の目標' });
   const extraRegion = () => screen.getByRole('region', { name: 'できたら前倒し' });
   await screen.findByRole('region', { name: '今日の目標' });
 
-  // 優先1を済にする: 今日済ませた1件(行は目標に残る)＋優先2
+  // 優先1を済にする: 今日済ませた1件(行は目標に残る)＋優先2・3
   userEvent.click(within(goalRegion()).getByRole('checkbox', { name: '優先1の作業' }));
   await waitFor(() => expect(within(goalRegion()).getByRole('checkbox', { name: '優先1の作業' })).toBeChecked());
   await waitFor(() => expect(within(goalRegion()).getByRole('checkbox', { name: '優先1の作業' })).toBeEnabled());
-  expect(rowNames(goalRegion())).toEqual(['優先1の作業', '優先2の作業']);
-  expect(within(goalRegion()).getByText('済 1 / 2')).toBeInTheDocument();
+  expect(rowNames(goalRegion())).toEqual(['優先1の作業', '優先2の作業', '優先3の作業']);
+  expect(within(goalRegion()).getByText('済 1 / 3')).toBeInTheDocument();
   expect(screen.queryByText('今日の目標は達成')).not.toBeInTheDocument();
 
-  // 前倒しの優先3を済にする: 今日済ませた2件になり、目標は達成。優先2は前倒しへ
+  // 前倒しの優先4を済にする: 今日済ませた2件になり、優先3は前倒しへ
+  userEvent.click(within(extraRegion()).getByRole('checkbox', { name: '優先4の作業' }));
+  await waitFor(() => expect(rowNames(goalRegion())).toEqual(['優先1の作業', '優先4の作業', '優先2の作業']));
+  await waitFor(() => expect(within(goalRegion()).getByRole('checkbox', { name: '優先4の作業' })).toBeEnabled());
+  expect(rowNames(extraRegion())).toEqual(['優先3の作業']);
+
+  // 前倒しの優先3も済にする: 今日済ませた3件で目標は達成。優先2は前倒しへ
   userEvent.click(within(extraRegion()).getByRole('checkbox', { name: '優先3の作業' }));
   await waitFor(() => expect(screen.getByText('今日の目標は達成')).toBeInTheDocument());
-  expect(rowNames(goalRegion())).toEqual(['優先1の作業', '優先3の作業']);
+  expect(rowNames(goalRegion())).toEqual(['優先1の作業', '優先3の作業', '優先4の作業']);
   expect(rowNames(extraRegion())).toEqual(['優先2の作業']);
   expect(yarukotoGets()).toHaveLength(1);
 });
@@ -707,16 +721,17 @@ test('unchecking a row done today puts it back among the unfinished rows', async
     yarukotoRow('p1', '優先1の作業', thisMonday(), { priority: 1 }),
     yarukotoRow('d1', '今日済ませた作業', thisMonday(), { done: true, lastEdited: editedNow(), priority: 2 }),
     yarukotoRow('p3', '優先3の作業', thisMonday(), { priority: 3 }),
-  ], { today: [shiftEvent('入り')] });
+    yarukotoRow('p4', '優先4の作業', thisMonday(), { priority: 4 }),
+  ], { today: [shiftEvent('日勤')] });
   render(<HomePage />);
   const goal = await screen.findByRole('region', { name: '今日の目標' });
-  expect(rowNames(goal)).toEqual(['今日済ませた作業', '優先1の作業']);
+  expect(rowNames(goal)).toEqual(['今日済ませた作業', '優先1の作業', '優先3の作業']);
 
   userEvent.click(within(goal).getByRole('checkbox', { name: '今日済ませた作業' }));
   await waitFor(() => expect(axios.patch).toHaveBeenCalledWith('/api/yarukoto/d1', { done: false }));
   // 未済の優先の順(サーバーの並び): 今日済ませた作業(優先2)は優先1の次
-  await waitFor(() => expect(rowNames(screen.getByRole('region', { name: '今日の目標' }))).toEqual(['優先1の作業', '今日済ませた作業']));
-  expect(rowNames(screen.getByRole('region', { name: 'できたら前倒し' }))).toEqual(['優先3の作業']);
+  await waitFor(() => expect(rowNames(screen.getByRole('region', { name: '今日の目標' }))).toEqual(['優先1の作業', '今日済ませた作業', '優先3の作業']));
+  expect(rowNames(screen.getByRole('region', { name: 'できたら前倒し' }))).toEqual(['優先4の作業']);
 });
 
 test('this week\'s rows done before today are not listed: only 「今週済み ○件」', async () => {
@@ -738,15 +753,15 @@ test('this week\'s rows done before today are not listed: only 「今週済み �
   expect(screen.getByText('3 / 4 完了')).toBeInTheDocument();
 });
 
-test('[⑪] 休みの日: 「休みの日なので、事業の作業は入れません」が出て、今週の一覧は畳まれ、「今週のやることを見る」を押すと出る', async () => {
-  setup([], threeRows(), { today: [shiftEvent('休み')] });
+test('[⑪] 事業の作業を入れない日(休み（休む）): 「今日は事業の作業を入れない日です」が出て、今週の一覧は畳まれ、「今週のやることを見る」を押すと出る', async () => {
+  setup([], threeRows(), { today: [shiftEvent('休み（休む）')] });
   render(<HomePage />);
 
-  expect(await screen.findByText('休みの日なので、事業の作業は入れません')).toBeInTheDocument();
-  expect(screen.getByText('今日は休みの日')).toBeInTheDocument();
+  expect(await screen.findByText('今日は事業の作業を入れない日です')).toBeInTheDocument();
+  expect(screen.getByText('今日は休み（休む）の日')).toBeInTheDocument();
   // 今日の目標の場所に出ている。行は出ていない(畳んである)
   const goal = screen.getByRole('region', { name: '今日の目標' });
-  expect(within(goal).getByText('休みの日なので、事業の作業は入れません')).toBeInTheDocument();
+  expect(within(goal).getByText('今日は事業の作業を入れない日です')).toBeInTheDocument();
   expect(screen.queryByText('優先1の作業')).not.toBeInTheDocument();
   expect(screen.queryByRole('region', { name: 'できたら前倒し' })).not.toBeInTheDocument();
 
@@ -765,7 +780,7 @@ test('[⑪] 休みの日: 「休みの日なので、事業の作業は入れま
 });
 
 test('on a day off a row can still be checked once the list is opened, and it stays visible', async () => {
-  setup([], threeRows(), { today: [shiftEvent('休み')] });
+  setup([], threeRows(), { today: [shiftEvent('休み（撮影）')] });
   render(<HomePage />);
 
   userEvent.click(await screen.findByRole('button', { name: '今週のやることを見る（3件）' }));
@@ -775,8 +790,8 @@ test('on a day off a row can still be checked once the list is opened, and it st
   expect(screen.getByRole('button', { name: '今週のやることを見る（3件）' })).toBeInTheDocument();
 });
 
-test('a day with no goal (a name that is not known, or no shift): 今日の目標は出していません, and one list of this week\'s unfinished rows', async () => {
-  for (const calendar of [{ today: [shiftEvent('早番')] }, {}]) {
+test('a day with no goal (休み with no use decided, a name that is not known, or no shift): 今日の目標は出していません, and one list of this week\'s unfinished rows', async () => {
+  for (const calendar of [{ today: [shiftEvent('休み')] }, { today: [shiftEvent('早番')] }, {}]) {
     setup([], [
       ...threeRows(),
       yarukotoRow('d1', '今日済ませた作業', null, { done: true, lastEdited: editedNow() }),
@@ -801,21 +816,21 @@ test('the category buttons apply to the whole card, and the goal is counted amon
     yarukotoRow('y2', '株の優先2', thisMonday(), { priority: 2, business: '株', category: '株' }),
     yarukotoRow('y3', '株の優先3', thisMonday(), { priority: 3, business: '株', category: '株' }),
     yarukotoRow('y4', 'YCDCの優先4', thisMonday(), { priority: 4, business: 'YCDC', category: 'YCDC' }),
-  ], { today: [shiftEvent('入り')] });
+  ], { today: [shiftEvent('日勤')] });
   render(<HomePage />);
 
   const goal = await screen.findByRole('region', { name: '今日の目標' });
-  expect(rowNames(goal)).toEqual(['株の今日済ませた作業', 'YCDCの優先1']);
+  expect(rowNames(goal)).toEqual(['株の今日済ませた作業', 'YCDCの優先1', '株の優先2']);
 
   userEvent.click(screen.getByRole('button', { name: '株' }));
-  await waitFor(() => expect(rowNames(screen.getByRole('region', { name: '今日の目標' }))).toEqual(['株の今日済ませた作業', '株の優先2']));
-  expect(rowNames(screen.getByRole('region', { name: 'できたら前倒し' }))).toEqual(['株の優先3']);
-  expect(screen.getByText('済 1 / 2')).toBeInTheDocument();
+  await waitFor(() => expect(rowNames(screen.getByRole('region', { name: '今日の目標' }))).toEqual(['株の今日済ませた作業', '株の優先2', '株の優先3']));
+  expect(screen.queryByRole('region', { name: 'できたら前倒し' })).not.toBeInTheDocument();
+  expect(screen.getByText('済 1 / 3')).toBeInTheDocument();
 
   userEvent.click(screen.getByRole('button', { name: 'YCDC' }));
   await waitFor(() => expect(rowNames(screen.getByRole('region', { name: '今日の目標' }))).toEqual(['YCDCの優先1', 'YCDCの優先4']));
   expect(screen.queryByRole('region', { name: 'できたら前倒し' })).not.toBeInTheDocument();
-  expect(screen.getByText('済 0 / 2')).toBeInTheDocument();
+  expect(screen.getByText('済 0 / 3')).toBeInTheDocument();
 });
 
 test('「来週」「後で」 are one list as before: unfinished rows on top, done rows below', async () => {
@@ -922,14 +937,14 @@ test('the date changes while the screen was away: the new calendar gives a new �
     setup([], threeRows(), { today: [shiftEvent('入り')] });
     render(<HomePage />);
     await screen.findByText('今日は入りの日');
-    expect(rowNames(screen.getByRole('region', { name: '今日の目標' }))).toHaveLength(2);
+    expect(rowNames(screen.getByRole('region', { name: '今日の目標' }))).toHaveLength(3);
 
-    setup([], threeRows(), { today: [shiftEvent('休み')] });
+    setup([], threeRows(), { today: [shiftEvent('休み（撮影）')] });
     clock.advance(10 * 60 * 60 * 1000);
     comeBackByVisibility();
-    expect(await screen.findByText('今日は休みの日')).toBeInTheDocument();
+    expect(await screen.findByText('今日は休み（撮影）の日')).toBeInTheDocument();
     expect(screen.queryByText('今日は入りの日')).not.toBeInTheDocument();
-    expect(await screen.findByText('休みの日なので、事業の作業は入れません')).toBeInTheDocument();
+    expect(await screen.findByText('今日は事業の作業を入れない日です')).toBeInTheDocument();
     expect(screen.queryByText('優先1の作業')).not.toBeInTheDocument();
   } finally {
     clock.restore();
@@ -1040,7 +1055,7 @@ test('after a read the real last-edited time of Notion is used (a row checked he
     render(<HomePage />);
     userEvent.click(await screen.findByRole('checkbox', { name: '押した行' }));
     await waitFor(() => expect(within(screen.getByRole('region', { name: '今日の目標' })).getByRole('checkbox', { name: '押した行' })).toBeChecked());
-    expect(screen.getByText('済 1 / 2')).toBeInTheDocument();
+    expect(screen.getByText('済 1 / 6')).toBeInTheDocument();
 
     // Notion は、この行を済で今日更新したものとして返す
     setup([], [yarukotoRow('y1', '押した行', thisMonday(), { done: true, lastEdited: editedNow() })], { today: [shiftEvent('入り')] });
@@ -1049,7 +1064,7 @@ test('after a read the real last-edited time of Notion is used (a row checked he
     await waitFor(() => expect(yarukotoGets()).toHaveLength(2));
     await act(async () => {});
     expect(screen.getByRole('checkbox', { name: '押した行' })).toBeChecked();
-    expect(screen.getByText('済 1 / 2')).toBeInTheDocument();
+    expect(screen.getByText('済 1 / 6')).toBeInTheDocument();
   } finally {
     clock.restore();
   }
