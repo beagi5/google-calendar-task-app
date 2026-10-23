@@ -9,6 +9,7 @@ const helmet = require('helmet');
 const validator = require('validator');
 const crypto = require('crypto');
 const notion = require('./notion');
+const { completionPatch } = require('./calendar-done');
 
 // Security middleware setup
 const app = express();
@@ -524,17 +525,14 @@ async function patchCalendarEventDate(req, eventId, date) {
   }
 }
 
-const COMPLETED_PREFIX = '[完了] ';
-
+// The "[完了] " title and the Graphite color (the rules are in calendar-done.js)
 async function patchCalendarEventForCompletion(req, eventId, completed) {
   const calendar = getCalendarClientForRequest(req);
   if (!calendar) return { ok: false };
   try {
     const current = await calendar.events.get({ calendarId: 'primary', eventId });
-    let summary = current.data.summary || '';
-    if (completed && !summary.startsWith(COMPLETED_PREFIX)) summary = COMPLETED_PREFIX + summary;
-    if (!completed && summary.startsWith(COMPLETED_PREFIX)) summary = summary.slice(COMPLETED_PREFIX.length);
-    await calendar.events.patch({ calendarId: 'primary', eventId, resource: { summary } });
+    const resource = completionPatch(current.data, completed);
+    await calendar.events.patch({ calendarId: 'primary', eventId, resource, sendUpdates: 'none' });
     return { ok: true };
   } catch (err) {
     console.error('Failed to patch calendar event completion state:', err);
