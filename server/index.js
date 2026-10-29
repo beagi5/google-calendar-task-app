@@ -18,6 +18,9 @@ const app = express();
 // hsts: false — this app is intentionally served over plain HTTP (Tailscale private network,
 // no TLS cert for the Tailscale hostname). HSTS would make browsers force-upgrade to HTTPS
 // and fail to connect at all.
+// crossOriginOpenerPolicy: false — the HQ dashboard (a claude.ai artifact, i.e. a sandboxed iframe)
+// opens this app in a new tab. That tab inherits the sandbox, and Chrome refuses to show a sandboxed
+// page that sends COOP same-origin (ERR_BLOCKED_BY_RESPONSE).
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
@@ -28,7 +31,8 @@ app.use(helmet({
       upgradeInsecureRequests: null // this app is intentionally HTTP-only (Tailscale); don't force-upgrade sub-resources to HTTPS
     }
   },
-  hsts: false
+  hsts: false,
+  crossOriginOpenerPolicy: false
 }));
 
 // Rate limiting
