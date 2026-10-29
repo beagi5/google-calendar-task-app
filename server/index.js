@@ -18,9 +18,11 @@ const app = express();
 // hsts: false — this app is intentionally served over plain HTTP (Tailscale private network,
 // no TLS cert for the Tailscale hostname). HSTS would make browsers force-upgrade to HTTPS
 // and fail to connect at all.
-// crossOriginOpenerPolicy: false — the HQ dashboard (a claude.ai artifact, i.e. a sandboxed iframe)
+// crossOriginOpenerPolicy unsafe-none — the HQ dashboard (a claude.ai artifact, i.e. a sandboxed iframe)
 // opens this app in a new tab. That tab inherits the sandbox, and Chrome refuses to show a sandboxed
-// page that sends COOP same-origin (ERR_BLOCKED_BY_RESPONSE).
+// page that sends COOP same-origin (ERR_BLOCKED_BY_RESPONSE). Send unsafe-none explicitly rather than
+// omitting the header: a browser that cached index.html while it still had same-origin revalidates
+// it with a 304, and a 304 without the header leaves the cached same-origin in place.
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
@@ -32,7 +34,7 @@ app.use(helmet({
     }
   },
   hsts: false,
-  crossOriginOpenerPolicy: false
+  crossOriginOpenerPolicy: { policy: 'unsafe-none' }
 }));
 
 // Rate limiting
